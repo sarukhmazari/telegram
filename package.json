@@ -5,13 +5,14 @@
   "description": "Production-ready Telegram Digital Products Store Bot",
   "main": "dist/bot/index.js",
   "scripts": {
-    "build": "node node_modules/typescript/lib/tsc.js",
+    "postinstall": "prisma generate",
+    "build": "tsc",
     "start": "node dist/bot/index.js",
-    "dev": "node node_modules/tsx/dist/cli.mjs watch src/bot/index.ts",
-    "prisma:generate": "node node_modules/prisma/build/index.js generate",
-    "prisma:migrate": "node node_modules/prisma/build/index.js migrate dev",
-    "prisma:studio": "node node_modules/prisma/build/index.js studio",
-    "test": "node node_modules/vitest/vitest.mjs run"
+    "dev": "tsx watch src/bot/index.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "test": "vitest run"
   },
   "keywords": [
     "telegram",
