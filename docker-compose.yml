@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: telegram_store_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: telegram_store
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  bot:
+    build: .
+    container_name: telegram_store_bot
+    restart: always
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgrespassword@postgres:5432/telegram_store?schema=public"
+      BOT_TOKEN: "${BOT_TOKEN}"
+      ADMIN_IDS: "${ADMIN_IDS}"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
+      STORE_NAME: "${STORE_NAME:-Digital Store}"
+      STORE_CURRENCY: "${STORE_CURRENCY:-USD}"
+      SUPPORT_USERNAME: "${SUPPORT_USERNAME:-StoreSupport}"
+      BOT_MODE: "${BOT_MODE:-polling}"
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:

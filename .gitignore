@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Environment variables (CRITICAL)
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Database / Temp
+prisma/*.db
+prisma/*.sqlite
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
