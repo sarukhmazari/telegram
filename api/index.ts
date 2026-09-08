@@ -16,12 +16,35 @@ export default async function handler(req: IncomingMessage & { body?: any; query
   };
 
   if (req.method === 'GET') {
-    return sendJson(200, {
-      status: 'ok',
-      store: config.STORE_NAME,
-      message: 'Telegram Digital Store Bot is running!',
-      timestamp: new Date().toISOString(),
-    });
+    try {
+      const urlObj = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+      const shouldSetWebhook = urlObj.searchParams.get('setWebhook') === 'true';
+
+      const host = req.headers['x-forwarded-host'] || req.headers.host;
+      const proto = req.headers['x-forwarded-proto'] || 'https';
+      const autoWebhookUrl = `${proto}://${host}/api`;
+
+      let webhookAction = null;
+      if (shouldSetWebhook && host) {
+        await bot.telegram.setWebhook(autoWebhookUrl);
+        webhookAction = `Webhook successfully set to ${autoWebhookUrl}`;
+      }
+
+      const webhookInfo: any = await bot.telegram.getWebhookInfo().catch((e) => ({ error: e.message }));
+
+      return sendJson(200, {
+        status: 'ok',
+        store: config.STORE_NAME,
+        message: 'Telegram Digital Store Bot is running on Vercel!',
+        webhookAction,
+        currentWebhookInfo: webhookInfo,
+        suggestedWebhookUrl: autoWebhookUrl,
+        instructions: !webhookInfo?.url ? `Visit this URL with ?setWebhook=true to connect Telegram to this Vercel domain.` : 'Telegram webhook is active!',
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      return sendJson(500, { error: err.message });
+    }
   }
 
   if (req.method === 'POST') {
