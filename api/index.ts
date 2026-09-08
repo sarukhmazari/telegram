@@ -53,7 +53,20 @@ export default async function handler(req: IncomingMessage & { body?: any; query
       await connectDatabase();
 
       let body = req.body;
-      if (typeof body === 'string') {
+      if (!body) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+        }
+        const raw = Buffer.concat(chunks).toString('utf-8');
+        if (raw) {
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            body = raw;
+          }
+        }
+      } else if (typeof body === 'string') {
         try {
           body = JSON.parse(body);
         } catch {
@@ -61,7 +74,7 @@ export default async function handler(req: IncomingMessage & { body?: any; query
         }
       }
 
-      if (body) {
+      if (body && typeof body === 'object') {
         await bot.handleUpdate(body, res);
       }
 
