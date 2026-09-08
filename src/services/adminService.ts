@@ -1,5 +1,5 @@
 import { prisma } from '../database/index.js';
-import { encryptData } from '../utils/crypto.js';
+import { encryptData, decryptData } from '../utils/crypto.js';
 import { PaymentStatus, OrderStatus, DeliveryStatus } from '@prisma/client';
 import { logger } from '../utils/logger.js';
 import { DeliveryService } from './deliveryService.js';
@@ -84,6 +84,12 @@ export class AdminService {
     let duplicateCount = 0;
     let invalidCount = 0;
 
+    const existingItems = await prisma.stockItem.findMany({
+      where: { variantId },
+      select: { content: true },
+    });
+    const existingPlaintexts = new Set(existingItems.map((item) => decryptData(item.content)));
+
     for (const rawLine of rawTextLines) {
       const trimmed = rawLine.trim();
       if (!trimmed && !fileId) {
@@ -91,17 +97,12 @@ export class AdminService {
         continue;
       }
 
-      const encryptedContent = encryptData(trimmed);
-
-      // Check if exact content already exists for variant
-      const existing = await prisma.stockItem.findFirst({
-        where: { variantId, content: encryptedContent },
-      });
-
-      if (existing) {
+      if (existingPlaintexts.has(trimmed)) {
         duplicateCount++;
         continue;
       }
+
+      const encryptedContent = encryptData(trimmed);
 
       await prisma.stockItem.create({
         data: {
@@ -111,6 +112,7 @@ export class AdminService {
         },
       });
 
+      existingPlaintexts.add(trimmed);
       importedCount++;
     }
 

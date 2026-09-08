@@ -181,10 +181,25 @@ export class DeliveryService {
 
     message += `Thank you for shopping with us!`;
 
-    await telegramApi.sendMessage(telegramId.toString(), message, {
-      parse_mode: 'Markdown',
-      reply_markup: getBackHomeKeyboard().reply_markup,
-    });
+    try {
+      await telegramApi.sendMessage(telegramId.toString(), message, {
+        parse_mode: 'Markdown',
+        reply_markup: getBackHomeKeyboard().reply_markup,
+      });
+    } catch (err) {
+      logger.warn('Markdown parsing failed for delivery message, falling back to plain text', { err });
+      let plainMsg = `✅ Purchase Complete! Order #${orderNumber}\n\nProduct: ${productName}\n\n🔑 Your Digital Product Credentials / Keys:\n\n`;
+      items.forEach((item) => {
+        plainMsg += `${item.content}\n\n`;
+      });
+      plainMsg += `Thank you for shopping with us!`;
+
+      await telegramApi.sendMessage(telegramId.toString(), plainMsg, {
+        reply_markup: getBackHomeKeyboard().reply_markup,
+      }).catch((fallbackErr: any) => {
+        logger.error('Failed to send fallback delivery message', { fallbackErr });
+      });
+    }
 
     // Send file attachments if present
     for (const item of items) {

@@ -207,16 +207,66 @@ bot.action('menu_orders', async (ctx) => {
     return;
   }
 
-  let msg = `📦 *Your Order History*\n\n`;
+  let msg = `📦 *Your Order History*\n\nSelect an order below to view credentials & details:\n\n`;
+  const buttons: any[] = [];
   orders.forEach((o) => {
     msg += `• Order #${o.orderNumber} — *$${Number(o.totalAmount).toFixed(2)}* [${o.orderStatus}]\n`;
+    buttons.push([Markup.button.callback(`📋 #${o.orderNumber} ($${Number(o.totalAmount).toFixed(2)})`, `view_order_${o.id}`)]);
   });
+  buttons.push([Markup.button.callback('🏠 Home', 'menu_main')]);
 
   await ctx.editMessageText(msg, {
     parse_mode: 'Markdown',
-    reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
+    reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
   }).catch((err) => {
     if (!String(err).includes('message is not modified')) logger.warn('menu_orders edit error', { err });
+  });
+});
+
+// View Order Details & Purchased Credentials
+bot.action(/^view_order_(.+)$/, async (ctx) => {
+  const orderId = ctx.match[1];
+  const order = await OrderService.getOrderById(orderId);
+  if (!order) {
+    await ctx.answerCbQuery('Order not found.');
+    return;
+  }
+
+  const orderItem = order.items?.[0];
+  const productName = orderItem?.variant?.product?.name || 'Digital Item';
+  const totalAmount = Number(order.totalAmount).toFixed(2);
+
+  let msg =
+    `📦 *Order Details*\n\n` +
+    `📋 *Order Number:* \`#${order.orderNumber}\` \n` +
+    `📦 *Product:* ${productName}\n` +
+    `💰 *Total Amount:* *$${totalAmount} USD*\n` +
+    `📊 *Status:* [${order.orderStatus}]\n` +
+    `📅 *Date:* ${new Date(order.createdAt).toLocaleDateString()}\n\n`;
+
+  if (order.orderStatus === 'COMPLETED' && order.deliveryData) {
+    try {
+      const { decryptData } = await import('../utils/crypto.js');
+      const decryptedJson = decryptData(order.deliveryData);
+      const items: { content: string }[] = JSON.parse(decryptedJson);
+      msg += `🔑 *Purchased Credentials / Keys:*\n\n`;
+      items.forEach((item) => {
+        msg += `\`\`\`\n${item.content}\n\`\`\`\n`;
+      });
+    } catch (err) {
+      msg += `🔑 Credentials delivered to your chat.`;
+    }
+  }
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('⬅️ Back to Orders', 'menu_orders'), Markup.button.callback('🏠 Home', 'menu_main')],
+  ]);
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: keyboard.reply_markup,
+  }).catch(() => {
+    ctx.reply(msg, { parse_mode: 'Markdown', reply_markup: keyboard.reply_markup }).catch(() => {});
   });
 });
 
