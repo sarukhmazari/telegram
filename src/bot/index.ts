@@ -653,7 +653,10 @@ export async function startBot() {
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
-// Auto-start bot on execution
-startBot().catch((err) => {
-  logger.error('Fatal error during bot initialization', { err });
-});
+// Auto-start bot on execution only in standalone / non-serverless mode
+if (!process.env.VERCEL && !process.env.SERVERLESS) {
+  startBot().catch((err) => {
+    logger.error('Fatal error during bot initialization', { err });
+  });
+}
+

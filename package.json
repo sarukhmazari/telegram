@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Production-ready Telegram Digital Products Store Bot",
-  "main": "dist/bot/index.js",
+  "main": "dist/src/bot/index.js",
   "scripts": {
     "postinstall": "prisma generate",
     "build": "tsc",
-    "start": "node dist/bot/index.js",
+    "start": "node dist/src/bot/index.js",
     "dev": "tsx watch src/bot/index.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
