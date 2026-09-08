@@ -11,7 +11,11 @@ const envSchema = z.object({
   ),
   DATABASE_URL: z.string().trim().min(1, 'DATABASE_URL is required'),
   ENCRYPTION_KEY: z.string().trim().min(16, 'ENCRYPTION_KEY must be at least 16 chars'),
-  STORE_NAME: z.string().trim().default('Digital Store'),
+  STORE_NAME: z
+    .string()
+    .trim()
+    .default('Digital Store')
+    .transform((val) => (/^[a-f0-9]{32,64}$/i.test(val) ? 'Digital Store' : val)),
   STORE_CURRENCY: z.string().trim().default('USD'),
   SUPPORT_USERNAME: z.string().trim().default('zoxer19'),
   ENABLE_WALLET: z
@@ -57,12 +61,13 @@ if (!parsedEnv.success) {
   configError = parsedEnv.error.format();
   console.error('❌ Environment validation issues:', configError);
   // Safe fallback to prevent serverless import crashes
+  const rawStoreName = process.env.STORE_NAME || 'Digital Store';
   validatedConfig = {
     BOT_TOKEN: process.env.BOT_TOKEN || '',
     ADMIN_IDS: (process.env.ADMIN_IDS || '').split(',').map((s) => s.trim()).filter(Boolean),
     DATABASE_URL: process.env.DATABASE_URL || '',
     ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || 'default_fallback_encryption_key_32c',
-    STORE_NAME: process.env.STORE_NAME || 'Digital Store',
+    STORE_NAME: /^[a-f0-9]{32,64}$/i.test(rawStoreName) ? 'Digital Store' : rawStoreName,
     STORE_CURRENCY: process.env.STORE_CURRENCY || 'USD',
     SUPPORT_USERNAME: process.env.SUPPORT_USERNAME || 'zoxer19',
     ENABLE_WALLET: process.env.ENABLE_WALLET !== 'false',

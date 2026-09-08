@@ -47,7 +47,6 @@ bot.start(async (ctx) => {
 
   const welcomeText =
     `👋 *Welcome, ${userDisplay}!*${userId}\n\n` +
-    `Welcome to *${config.STORE_NAME}*!\n\n` +
     `Explore our catalog of digital products, premium accounts, software licenses, and subscription plans.\n\n` +
     `Select an option below to get started:`;
 
@@ -127,7 +126,7 @@ bot.action('menu_main', async (ctx) => {
     : (ctx.from?.first_name || `User`);
   const userId = ctx.from?.id ? ` (ID: \`${ctx.from.id}\`)` : '';
 
-  await ctx.editMessageText(`🏠 *Main Menu*\n\nWelcome back, *${userDisplay}*!${userId}\n\nWelcome to *${config.STORE_NAME}*!`, {
+  await ctx.editMessageText(`🏠 *Main Menu*\n\nWelcome back, *${userDisplay}*!${userId}`, {
     parse_mode: 'Markdown',
     reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
   }).catch((err) => {
