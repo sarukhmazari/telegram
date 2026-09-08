@@ -39,11 +39,35 @@ const envSchema = z.object({
   LOG_LEVEL: z.string().default('info'),
 });
 
+export let configError: any = null;
+let validatedConfig: any;
+
 const parsedEnv = envSchema.safeParse(process.env);
 
 if (!parsedEnv.success) {
-  console.error('❌ Environment validation failed:', parsedEnv.error.format());
-  throw new Error('Invalid environment configuration');
+  configError = parsedEnv.error.format();
+  console.error('❌ Environment validation issues:', configError);
+  // Safe fallback to prevent serverless import crashes
+  validatedConfig = {
+    BOT_TOKEN: process.env.BOT_TOKEN || '',
+    ADMIN_IDS: (process.env.ADMIN_IDS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    DATABASE_URL: process.env.DATABASE_URL || '',
+    ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || 'default_fallback_encryption_key_32c',
+    STORE_NAME: process.env.STORE_NAME || 'Digital Store',
+    STORE_CURRENCY: process.env.STORE_CURRENCY || 'USD',
+    SUPPORT_USERNAME: process.env.SUPPORT_USERNAME || 'zoxer19',
+    ENABLE_WALLET: process.env.ENABLE_WALLET !== 'false',
+    ENABLE_REFERRALS: process.env.ENABLE_REFERRALS !== 'false',
+    ENABLE_REVIEWS: process.env.ENABLE_REVIEWS !== 'false',
+    ENABLE_COUPONS: process.env.ENABLE_COUPONS !== 'false',
+    BOT_MODE: (process.env.BOT_MODE as any) || 'polling',
+    WEBHOOK_URL: process.env.WEBHOOK_URL,
+    PORT: parseInt(process.env.PORT || '3000', 10),
+    LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+  };
+} else {
+  validatedConfig = parsedEnv.data;
 }
 
-export const config = parsedEnv.data;
+export const config = validatedConfig;
+

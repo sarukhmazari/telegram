@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { bot } from '../src/bot/index.js';
 import { connectDatabase } from '../src/database/index.js';
-import { config } from '../src/config/index.js';
+import { config, configError } from '../src/config/index.js';
 
 export default async function handler(req: IncomingMessage & { body?: any; query?: any; method?: string }, res: ServerResponse & { status?: (code: number) => any; json?: (data: any) => any; send?: (data: any) => any }) {
   // Helper for JSON response in serverless environments
@@ -36,6 +36,7 @@ export default async function handler(req: IncomingMessage & { body?: any; query
         status: 'ok',
         store: config.STORE_NAME,
         message: 'Telegram Digital Store Bot is running on Vercel!',
+        environmentCheck: configError ? { error: 'Missing some variables in Vercel', details: configError } : 'Environment variables valid',
         webhookAction,
         currentWebhookInfo: webhookInfo,
         suggestedWebhookUrl: autoWebhookUrl,
