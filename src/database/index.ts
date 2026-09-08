@@ -24,7 +24,7 @@ export async function connectDatabase() {
     logger.info('✅ Successfully connected to database');
   } catch (error) {
     logger.error('❌ Failed to connect to database', { error });
-    process.exit(1);
+    throw error;
   }
 }
 
