@@ -40,8 +40,14 @@ bot.catch(handleBotError);
 
 // /start command
 bot.start(async (ctx) => {
+  const userDisplay = ctx.from?.username
+    ? `@${ctx.from.username}`
+    : (ctx.from?.first_name || `User`);
+  const userId = ctx.from?.id ? ` (ID: \`${ctx.from.id}\`)` : '';
+
   const welcomeText =
-    `👋 *Welcome to ${config.STORE_NAME}!*\n\n` +
+    `👋 *Welcome, ${userDisplay}!*${userId}\n\n` +
+    `Welcome to *${config.STORE_NAME}*!\n\n` +
     `Explore our catalog of digital products, premium accounts, software licenses, and subscription plans.\n\n` +
     `Select an option below to get started:`;
 
@@ -116,7 +122,12 @@ bot.action('menu_store', async (ctx) => {
 
 // Main menu callback
 bot.action('menu_main', async (ctx) => {
-  await ctx.editMessageText(`🏠 *Main Menu*\n\nWelcome back to *${config.STORE_NAME}*!`, {
+  const userDisplay = ctx.from?.username
+    ? `@${ctx.from.username}`
+    : (ctx.from?.first_name || `User`);
+  const userId = ctx.from?.id ? ` (ID: \`${ctx.from.id}\`)` : '';
+
+  await ctx.editMessageText(`🏠 *Main Menu*\n\nWelcome back, *${userDisplay}*!${userId}\n\nWelcome to *${config.STORE_NAME}*!`, {
     parse_mode: 'Markdown',
     reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
   }).catch((err) => {
