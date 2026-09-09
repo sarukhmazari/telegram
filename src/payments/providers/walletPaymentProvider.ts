@@ -31,7 +31,7 @@ export class WalletPaymentProvider implements IPaymentProvider {
 
     const currentBalance = Number(user.balance);
     if (currentBalance < amount) {
-      throw new Error(`Insufficient wallet balance. Available: $${currentBalance.toFixed(2)}, Required: $${amount.toFixed(2)}`);
+      throw new Error(`Insufficient wallet balance. Available: Rs. ${currentBalance.toFixed(2)}, Required: Rs. ${amount.toFixed(2)}`);
     }
 
     const payment = await prisma.$transaction(async (tx) => {

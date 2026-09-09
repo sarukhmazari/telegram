@@ -150,7 +150,7 @@ export class AdminService {
     });
 
     if (payment && bot) {
-      const msg = `❌ *Payment Verification Failed*\n\nOrder #${payment.order.orderNumber}\nAmount: $${Number(payment.amount).toFixed(2)}\n\nReason: ${adminNotes || 'Verification rejected by store admin.'}`;
+      const msg = `❌ *Payment Verification Failed*\n\nOrder #${payment.order.orderNumber}\nAmount: Rs. ${Number(payment.amount).toFixed(2)}\n\nReason: ${adminNotes || 'Verification rejected by store admin.'}`;
       await bot.telegram.sendMessage(payment.user.telegramId.toString(), msg, { parse_mode: 'Markdown' }).catch(() => {});
     }
 

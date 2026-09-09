@@ -16,7 +16,7 @@ const envSchema = z.object({
     .trim()
     .default('Digital Store')
     .transform((val) => (/^[a-f0-9]{32,64}$/i.test(val) ? 'Digital Store' : val)),
-  STORE_CURRENCY: z.string().trim().default('USD'),
+  STORE_CURRENCY: z.string().trim().default('PKR'),
   SUPPORT_USERNAME: z.string().trim().default('zoxer19'),
   ENABLE_WALLET: z
     .string()
@@ -68,7 +68,7 @@ if (!parsedEnv.success) {
     DATABASE_URL: process.env.DATABASE_URL || '',
     ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || 'default_fallback_encryption_key_32c',
     STORE_NAME: /^[a-f0-9]{32,64}$/i.test(rawStoreName) ? 'Digital Store' : rawStoreName,
-    STORE_CURRENCY: process.env.STORE_CURRENCY || 'USD',
+    STORE_CURRENCY: process.env.STORE_CURRENCY || 'PKR',
     SUPPORT_USERNAME: process.env.SUPPORT_USERNAME || 'zoxer19',
     ENABLE_WALLET: process.env.ENABLE_WALLET !== 'false',
     ENABLE_REFERRALS: process.env.ENABLE_REFERRALS !== 'false',

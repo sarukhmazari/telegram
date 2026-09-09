@@ -35,7 +35,7 @@ export class CouponService {
       return {
         isValid: false,
         discountAmount: 0,
-        errorMessage: `Minimum order amount of $${Number(coupon.minOrderAmount).toFixed(2)} required for this coupon.`,
+        errorMessage: `Minimum order amount of Rs. ${Number(coupon.minOrderAmount).toFixed(2)} required for this coupon.`,
       };
     }
 

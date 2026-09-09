@@ -121,7 +121,7 @@ export class ProductService {
     deliveryType: DeliveryType,
     duration?: string,
     description?: string,
-    currency: string = 'USD'
+    currency: string = 'PKR'
   ): Promise<ProductVariant> {
     return prisma.productVariant.create({
       data: {

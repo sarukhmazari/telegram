@@ -71,7 +71,7 @@ bot.command('shop', async (ctx) => {
 
 bot.command('balance', async (ctx) => {
   const balance = Number(ctx.dbUser?.balance || 0).toFixed(2);
-  const msg = `💰 *Your Wallet Balance*\n\nCurrent Balance: *$${balance} ${config.STORE_CURRENCY}*\n\nYou can use your wallet balance for instant payments at checkout.`;
+  const msg = `💰 *Your Wallet Balance*\n\nCurrent Balance: *Rs. ${balance}*\n\nYou can use your wallet balance for instant payments at checkout.`;
   await ctx.reply(msg, {
     parse_mode: 'Markdown',
     reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
@@ -87,7 +87,7 @@ bot.command('orders', async (ctx) => {
   }
   let msg = `📦 *Your Order History*\n\n`;
   orders.forEach((o) => {
-    msg += `• Order #${o.orderNumber} - *$${Number(o.totalAmount).toFixed(2)}* [${o.orderStatus}]\n`;
+    msg += `• Order #${o.orderNumber} - *Rs. ${Number(o.totalAmount).toFixed(2)}* [${o.orderStatus}]\n`;
   });
   await ctx.reply(msg, {
     parse_mode: 'Markdown',
@@ -140,7 +140,7 @@ bot.action('menu_balance', async (ctx) => {
   const balance = Number(user?.balance || 0).toFixed(2);
   const msg =
     `💰 *Your Wallet Balance*\n\n` +
-    `Current Balance: *$${balance} ${config.STORE_CURRENCY}*\n\n` +
+    `Current Balance: *Rs. ${balance}*\n\n` +
     `You can use your wallet balance for instant payments at checkout.`;
 
   const keyboard = Markup.inlineKeyboard([
@@ -187,7 +187,7 @@ bot.action('menu_account', async (ctx) => {
     `👤 *My Account Profile*\n\n` +
     `User ID: \`${user.telegramId.toString()}\` \n` +
     `Username: ${user.username ? '@' + user.username : 'N/A'}\n` +
-    `Wallet Balance: *$${Number(user.balance).toFixed(2)}*\n` +
+    `Wallet Balance: *Rs. ${Number(user.balance).toFixed(2)}*\n` +
     `Referral Code: \`${user.referralCode}\` \n\n` +
     `Share your referral link to earn rewards:\n` +
     `\`https://t.me/${ctx.botInfo?.username || 'Bot'}?start=${user.referralCode}\``;
@@ -220,8 +220,8 @@ bot.action('menu_orders', async (ctx) => {
   let msg = `📦 *Your Order History*\n\nSelect an order below to view credentials & details:\n\n`;
   const buttons: any[] = [];
   orders.forEach((o) => {
-    msg += `• Order #${o.orderNumber} — *$${Number(o.totalAmount).toFixed(2)}* [${o.orderStatus}]\n`;
-    buttons.push([Markup.button.callback(`📋 #${o.orderNumber} ($${Number(o.totalAmount).toFixed(2)})`, `view_order_${o.id}`)]);
+    msg += `• Order #${o.orderNumber} — *Rs. ${Number(o.totalAmount).toFixed(2)}* [${o.orderStatus}]\n`;
+    buttons.push([Markup.button.callback(`📋 #${o.orderNumber} (Rs. ${Number(o.totalAmount).toFixed(2)})`, `view_order_${o.id}`)]);
   });
   buttons.push([Markup.button.callback('🏠 Home', 'menu_main')]);
 
@@ -250,7 +250,7 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
     `📦 *Order Details*\n\n` +
     `📋 *Order Number:* \`#${order.orderNumber}\` \n` +
     `📦 *Product:* ${productName}\n` +
-    `💰 *Total Amount:* *$${totalAmount} USD*\n` +
+    `💰 *Total Amount:* *Rs. ${totalAmount} PKR*\n` +
     `📊 *Status:* [${order.orderStatus}]\n` +
     `📅 *Date:* ${new Date(order.createdAt).toLocaleDateString()}\n\n`;
 
@@ -329,11 +329,11 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
       `📦 *Product:* ${category.name}\n` +
       `📁 *Category:* ${category.name}\n` +
       `📊 *Available Items:* 0\n` +
-      `💰 *Price:* $0.00 USD\n\n` +
+      `💰 *Price:* Rs. 0.00 PKR\n\n` +
       `📝 *Description:*\n${category.description || 'No description provided for this product.'}`;
 
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('⚠️ Out of Stock ($0.00)', 'buy_zero_item')],
+      [Markup.button.callback('⚠️ Out of Stock (Rs. 0.00)', 'buy_zero_item')],
       [
         Markup.button.callback('⬅️ Back to Store Categories', 'menu_store'),
         Markup.button.callback('🏠 Home', 'menu_main'),
@@ -367,12 +367,12 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
     `📦 *Product:* ${rawProductName}\n` +
     `📁 *Category:* ${category.name}\n` +
     `📊 *Available Items:* ${stockCount}\n` +
-    `💰 *Price:* $${priceStr} USD\n\n` +
+    `💰 *Price:* Rs. ${priceStr} PKR\n\n` +
     `📝 *Description:*\n${description}`;
 
   const buyButton = stockCount > 0
-    ? Markup.button.callback(`💳 Buy Now ($${priceStr})`, `buy_var_${variantId}`)
-    : Markup.button.callback(`⚠️ Out of Stock ($${priceStr})`, 'buy_zero_item');
+    ? Markup.button.callback(`💳 Buy Now (Rs. ${priceStr})`, `buy_var_${variantId}`)
+    : Markup.button.callback(`⚠️ Out of Stock (Rs. ${priceStr})`, 'buy_zero_item');
 
   const keyboard = Markup.inlineKeyboard([
     [buyButton],
@@ -414,12 +414,12 @@ bot.action(/^prod_(.+)$/, async (ctx) => {
     `📦 *Product:* ${product.name}\n` +
     `📁 *Category:* ${categoryName}\n` +
     `📊 *Available Items:* ${stockCount}\n` +
-    `💰 *Price:* $${priceStr} USD\n\n` +
+    `💰 *Price:* Rs. ${priceStr} PKR\n\n` +
     `📝 *Description:*\n${product.description || 'No description provided.'}`;
 
   const buyButton = stockCount > 0
-    ? Markup.button.callback(`💳 Buy Now ($${priceStr})`, `buy_var_${variantId}`)
-    : Markup.button.callback(`⚠️ Out of Stock ($${priceStr})`, 'buy_zero_item');
+    ? Markup.button.callback(`💳 Buy Now (Rs. ${priceStr})`, `buy_var_${variantId}`)
+    : Markup.button.callback(`⚠️ Out of Stock (Rs. ${priceStr})`, 'buy_zero_item');
 
   const keyboard = Markup.inlineKeyboard([
     [buyButton],
@@ -470,12 +470,12 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
     `📋 *Order Number:* \`#${order.orderNumber}\` \n` +
     `📦 *Product:* ${productName}\n` +
     `🔢 *Quantity:* 1\n` +
-    `💰 *Total Amount:* *$${totalAmount} USD*\n\n` +
+    `💰 *Total Amount:* *Rs. ${totalAmount} PKR*\n\n` +
     `💳 *Select your payment method below:*`;
 
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('📱 Pay with JazzCash (03292823218)', `pay_method_jazzcash_${order.id}`)],
-    [Markup.button.callback(`💰 Pay with Wallet Balance ($${userBalance})`, `pay_method_wallet_${order.id}`)],
+    [Markup.button.callback(`💰 Pay with Wallet Balance (Rs. ${userBalance})`, `pay_method_wallet_${order.id}`)],
     [
       Markup.button.callback('⬅️ Cancel Order', 'menu_store'),
       Markup.button.callback('🏠 Home', 'menu_main'),
@@ -507,7 +507,7 @@ bot.action(/^pay_method_jazzcash_(.+)$/, async (ctx) => {
     `• *Payment Method:* JazzCash\n` +
     `• *Account Number:* \`03292823218\`\n` +
     `• *Account Title:* \`SARIKH MUREED\`\n` +
-    `• *Amount to Transfer:* *$${Number(order.totalAmount).toFixed(2)} USD*\n` +
+    `• *Amount to Transfer:* *Rs. ${Number(order.totalAmount).toFixed(2)} PKR*\n` +
     `• *Order Number:* \`#${order.orderNumber}\`\n\n` +
     `📌 *Instructions:*\n` +
     `After completing the transfer, please *reply directly to this chat with your 12-digit JazzCash Transaction ID (TRX ID)* or send a screenshot of the payment receipt.`;
@@ -583,7 +583,7 @@ bot.on(['text', 'photo'], async (ctx, next) => {
       orderId,
       user.id,
       parseFloat(amount),
-      'USD',
+      'PKR',
       idempotencyKey,
       { transactionReference: trxRef, proofFileId }
     );
@@ -609,7 +609,7 @@ bot.on(['text', 'photo'], async (ctx, next) => {
       `💳 *New Payment Proof Received!*\n\n` +
       `• *Order Number:* \`#${orderNumber}\` \n` +
       `• *Customer:* ${user.username ? '@' + user.username : user.firstName || user.id} (ID: \`${user.telegramId.toString()}\`)\n` +
-      `• *Amount:* *$${amount} USD*\n` +
+      `• *Amount:* *Rs. ${amount} PKR*\n` +
       `• *Method:* JazzCash (\`03292823218\` - \`SARIKH MUREED\`)\n` +
       `• *TRX Proof:* \`${trxRef}\``;
 

@@ -194,7 +194,7 @@ async function seed() {
           productId: product.id,
           name: catData.product.variantName,
           price: catData.product.price,
-          currency: 'USD',
+          currency: 'PKR',
           deliveryType: 'MANUAL',
           isEnabled: true,
         },

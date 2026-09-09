@@ -41,7 +41,7 @@ export function getProductVariantsKeyboard(product: Product, variants: (ProductV
     const deliveryBadge = v.deliveryType === DeliveryType.AUTOMATIC ? '⚡ Auto' : '🖐 Manual';
     return [
       Markup.button.callback(
-        `💳 ${v.name} — $${Number(v.price).toFixed(2)} [${deliveryBadge}]${stockBadge}`,
+        `💳 ${v.name} — Rs. ${Number(v.price).toFixed(2)} [${deliveryBadge}]${stockBadge}`,
         `buy_var_${v.id}`
       ),
     ];

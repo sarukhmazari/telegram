@@ -41,8 +41,8 @@ adminComposer.action('admin_dashboard', async (ctx) => {
     `👥 *Total Customers*: ${metrics.totalUsers}\n` +
     `📦 *Total Orders*: ${metrics.totalOrders}\n` +
     `📅 *Today's Orders*: ${metrics.todaysOrders}\n\n` +
-    `💰 *Total Revenue*: $${metrics.totalRevenue.toFixed(2)}\n` +
-    `💵 *Today's Revenue*: $${metrics.todaysRevenue.toFixed(2)}\n\n` +
+    `💰 *Total Revenue*: Rs. ${metrics.totalRevenue.toFixed(2)}\n` +
+    `💵 *Today's Revenue*: Rs. ${metrics.todaysRevenue.toFixed(2)}\n\n` +
     `⏳ *Pending Payments*: ${metrics.pendingPayments}\n` +
     `📦 *Pending Deliveries*: ${metrics.pendingDeliveries}\n` +
     `⚠️ *Low Stock Items*: ${metrics.lowStockItemsCount}`;
@@ -152,7 +152,7 @@ adminComposer.action('admin_payments', async (ctx) => {
     `💳 *Pending Payment Review* (1 of ${pendingPayments.length})\n\n` +
     `Order Number: #${payment.order.orderNumber}\n` +
     `Customer: ${payment.user.username ? '@' + payment.user.username : payment.user.id}\n` +
-    `Amount: *$${Number(payment.amount).toFixed(2)} ${payment.currency}*\n` +
+    `Amount: *Rs. ${Number(payment.amount).toFixed(2)} ${payment.currency}*\n` +
     `Reference: \`${payment.transactionReference || 'None'}\``;
 
   await ctx.editMessageText(msg, {
@@ -605,7 +605,7 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     ctx.session!.adminState = 'AWAITING_PRODUCT_PRICE';
 
     await ctx.reply(
-      `✅ Description saved!\n\n*(Final Step)* Reply with the *Price in USD* (e.g. \`12.50\` or \`0\`):`,
+      `✅ Description saved!\n\n*(Final Step)* Reply with the *Price in PKR* (e.g. \`500\` or \`1200\`):`,
       { parse_mode: 'Markdown' }
     );
     return;
@@ -615,7 +615,7 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
   if (state === 'AWAITING_PRODUCT_PRICE') {
     const priceNum = parseFloat(text);
     if (isNaN(priceNum) || priceNum < 0) {
-      await ctx.reply('⚠️ Invalid price! Please enter a valid number (e.g. `10.00` or `0`):', { parse_mode: 'Markdown' });
+      await ctx.reply('⚠️ Invalid price! Please enter a valid number (e.g. `500` or `0`):', { parse_mode: 'Markdown' });
       return;
     }
 
@@ -627,7 +627,10 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
       product.id,
       'Standard License',
       priceNum,
-      DeliveryType.AUTOMATIC
+      DeliveryType.AUTOMATIC,
+      undefined,
+      undefined,
+      'PKR'
     );
 
     ctx.session!.adminState = undefined;
@@ -637,7 +640,7 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
       `🎉 *Product Added Live to Store in Real-Time!*\n\n` +
       `📦 *Product Name:* ${product.name}\n` +
       `📁 *Category:* ${categoryName}\n` +
-      `💰 *Price:* $${priceNum.toFixed(2)} USD\n` +
+      `💰 *Price:* Rs. ${priceNum.toFixed(2)} PKR\n` +
       `📊 *Status:* Active & Live in Store`;
 
     await ctx.reply(successMsg, {
