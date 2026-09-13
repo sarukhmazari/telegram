@@ -246,13 +246,16 @@ adminComposer.action('admin_stock', async (ctx) => {
     return;
   }
 
-  let text = `📦 *Stock & Account Management*\n\nSelect a product below to upload Gmails, Netflix logins, or license keys:\n\n`;
+  let text = `📦 *Stock & Account Management*\n\nSelect a product below to upload or delete accounts/stock:\n\n`;
   const buttons: any[] = [];
 
   variants.forEach((v) => {
     const stockCount = v.stockItems.length;
     text += `• *${v.product.name}* — Current Stock: *${stockCount} accounts*\n`;
-    buttons.push([Markup.button.callback(`📥 Add Stock: ${v.product.name}`, `admin_add_stock_${v.id}`)]);
+    buttons.push([
+      Markup.button.callback(`📥 Add Stock: ${v.product.name}`, `admin_add_stock_${v.id}`),
+      Markup.button.callback(`🗑 Delete Stock`, `admin_delete_stock_variant_${v.id}`),
+    ]);
   });
 
   buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
@@ -414,6 +417,86 @@ adminComposer.action(/^admin_add_stock_(.+)$/, async (ctx) => {
   });
 });
 
+// 🗑 Delete Stock — Select Variant
+adminComposer.action(/^admin_delete_stock_variant_(.+)$/, async (ctx) => {
+  const variantId = ctx.match[1];
+  const variant = await prisma.productVariant.findUnique({
+    where: { id: variantId },
+    include: {
+      product: true,
+      stockItems: {
+        where: { isSold: false, lockedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      },
+    },
+  });
+
+  if (!variant) {
+    await ctx.answerCbQuery('Variant not found.');
+    return;
+  }
+
+  if (variant.stockItems.length === 0) {
+    await ctx.answerCbQuery('No available stock items to delete.', { show_alert: true });
+    return;
+  }
+
+  const { decryptData } = await import('../../utils/crypto.js');
+
+  const buttons: any[] = variant.stockItems.map((item, i) => [
+    Markup.button.callback(
+      `🗑 #${i + 1}: ${decryptData(item.content).substring(0, 30)}...`,
+      `admin_delete_stock_item_${item.id}`
+    ),
+  ]);
+  buttons.push([Markup.button.callback('⬅️ Back to Stock', 'admin_stock')]);
+
+  await ctx.editMessageText(
+    `🗑 *Delete Stock — ${variant.product.name}*\n\nShowing up to 20 unsold items. Tap one to delete it permanently:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+    }
+  );
+});
+
+// 🗑 Delete Stock Item — Confirm & Execute
+adminComposer.action(/^admin_delete_stock_item_(.+)$/, async (ctx) => {
+  const itemId = ctx.match[1];
+
+  const item = await prisma.stockItem.findUnique({
+    where: { id: itemId },
+    include: { variant: { include: { product: true } } },
+  });
+
+  if (!item) {
+    await ctx.answerCbQuery('Stock item not found or already deleted.', { show_alert: true });
+    return;
+  }
+
+  if (item.isSold) {
+    await ctx.answerCbQuery('⚠️ Cannot delete a sold stock item.', { show_alert: true });
+    return;
+  }
+
+  await prisma.stockItem.delete({ where: { id: itemId } });
+
+  const remaining = await ProductService.getAvailableStockCount(item.variantId);
+
+  await ctx.answerCbQuery('✅ Stock item deleted successfully.', { show_alert: true });
+  await ctx.editMessageText(
+    `✅ *Stock item deleted.*\n\n📦 *Product:* ${item.variant.product.name}\n📊 *Remaining Stock:* ${remaining} items`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback('🗑 Delete More', `admin_delete_stock_variant_${item.variantId}`)],
+        [Markup.button.callback('📦 Stock Management', 'admin_stock')],
+      ]).reply_markup,
+    }
+  );
+});
+
 // 📥 Assign Pending Stock Lines Action
 adminComposer.action(/^admin_assign_stock_(.+)$/, async (ctx) => {
   const variantId = ctx.match[1];
@@ -510,66 +593,44 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     return;
   }
 
-  const isAccountFormat = text.includes(':') || text.includes('@');
-
-  // Stock Upload Wizard — Import Accounts Line-by-Line when in AWAITING_STOCK_INPUT state
+  // Stock Upload Wizard — Import the entire reply as ONE single stock item
   if (state === 'AWAITING_STOCK_INPUT' && adminData.variantId) {
     const { variantId, productName } = adminData;
-    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-    if (lines.length === 0) {
-      await ctx.reply('⚠️ No valid lines found. Please reply with at least one account/key (e.g. `user:pass`).', { parse_mode: 'Markdown' });
+    // Treat the whole message as a single stock entry (no line splitting)
+    const stockEntry = text.trim();
+
+    if (!stockEntry) {
+      await ctx.reply('⚠️ Empty input. Please reply with a valid account or key (e.g. `email@example.com:password`).', { parse_mode: 'Markdown' });
       return;
     }
 
-    const result = await AdminService.importBulkStock(variantId, lines);
+    const result = await AdminService.importBulkStock(variantId, [stockEntry]);
 
     ctx.session!.adminState = undefined;
     ctx.session!.adminData = undefined;
 
     const availableStock = await ProductService.getAvailableStockCount(variantId);
 
-    const summaryMsg =
-      `🎉 *Accounts Successfully Uploaded & Encrypted!*\n\n` +
-      `📦 *Product:* ${productName}\n` +
-      `✅ *Imported:* ${result.importedCount} accounts\n` +
-      `⚠️ *Duplicates Skipped:* ${result.duplicateCount}\n` +
-      `📊 *Total Live Stock:* ${availableStock} items available`;
+    let summaryMsg: string;
+    if (result.duplicateCount > 0) {
+      summaryMsg =
+        `⚠️ *Duplicate Detected!*\n\n` +
+        `📦 *Product:* ${productName}\n` +
+        `This stock entry already exists in the database. Nothing was added.\n` +
+        `📊 *Total Live Stock:* ${availableStock} items available`;
+    } else {
+      summaryMsg =
+        `✅ *1 Stock Item Added & Encrypted!*\n\n` +
+        `📦 *Product:* ${productName}\n` +
+        `📊 *Total Live Stock:* ${availableStock} items available`;
+    }
 
     await ctx.reply(summaryMsg, {
       parse_mode: 'Markdown',
       reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📦 Back to Stock Management', 'admin_stock')]]).reply_markup,
     });
     return;
-  }
-
-  // If no active state OR if session was reset, but admin pastes accounts (user:pass format)
-  if (isAccountFormat && ctx.isAdmin) {
-    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (lines.length > 0) {
-      if (!ctx.session) ctx.session = {};
-      ctx.session.pendingStockLines = lines;
-
-      const variants = await prisma.productVariant.findMany({
-        include: { product: true },
-        orderBy: { createdAt: 'desc' },
-      });
-
-      if (variants.length > 0) {
-        const buttons = variants.map((v) => [
-          Markup.button.callback(`📥 Add ${lines.length} Account(s) to ${v.product.name}`, `admin_assign_stock_${v.id}`),
-        ]);
-
-        await ctx.reply(
-          `📥 *Detected ${lines.length} account line(s)!*\n\nSelect which product to upload these accounts to:`,
-          {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-          }
-        );
-        return;
-      }
-    }
   }
 
   if (!state) return next();
