@@ -385,7 +385,7 @@ adminComposer.action('admin_reviews', async (ctx) => {
   });
 });
 
-// 📥 Select Variant for Stock Upload
+// 📥 Select Variant for Stock Upload — Step 1: Ask for Price
 adminComposer.action(/^admin_add_stock_(.+)$/, async (ctx) => {
   const variantId = ctx.match[1];
   const variant = await prisma.productVariant.findUnique({
@@ -399,17 +399,14 @@ adminComposer.action(/^admin_add_stock_(.+)$/, async (ctx) => {
   }
 
   if (!ctx.session) ctx.session = {};
-  ctx.session.adminState = 'AWAITING_STOCK_INPUT';
-  ctx.session.adminData = { variantId, productName: variant.product.name, variantName: variant.name };
+  ctx.session.adminState = 'AWAITING_STOCK_PRICE';
+  ctx.session.adminData = { variantId, productName: variant.product.name, variantName: variant.name, currentPrice: Number(variant.price) };
 
   const promptText =
-    `📥 *Upload Accounts / Stock for ${variant.product.name}*\n\n` +
-    `Please reply with your accounts line-by-line (or paste them in one message):\n\n` +
-    `*Example Format (One per line):*\n` +
-    `\`email1@gmail.com:password123\`\n` +
-    `\`email2@gmail.com:password456\`\n` +
-    `\`email3@gmail.com:password789\`\n\n` +
-    `🔒 *All accounts will be AES-256 encrypted before saving.*`;
+    `💰 *Set Price — ${variant.product.name}*\n\n` +
+    `Current Price: *Rs. ${Number(variant.price).toFixed(2)} PKR*\n\n` +
+    `Reply with the *new price in PKR* to update it, or type \`skip\` to keep the current price.\n\n` +
+    `Example: \`1500\` or \`skip\``;
 
   await ctx.editMessageText(promptText, {
     parse_mode: 'Markdown',
@@ -590,6 +587,59 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
         reply_markup: keyboard.reply_markup,
       });
     }
+    return;
+  }
+
+  // Stock Upload Wizard — Step 1: Price Input
+  if (state === 'AWAITING_STOCK_PRICE' && adminData.variantId) {
+    const { variantId, productName, variantName, currentPrice } = adminData;
+
+    if (text.toLowerCase() === 'skip') {
+      // Keep existing price, move straight to stock entry
+      ctx.session!.adminState = 'AWAITING_STOCK_INPUT';
+
+      await ctx.reply(
+        `✅ *Price kept at Rs. ${Number(currentPrice).toFixed(2)} PKR*\n\n` +
+        `📥 *Now send the stock entry for ${productName}:*\n\n` +
+        `Reply with the account / key (e.g. \`email@example.com:password\`)\n\n` +
+        `🔒 It will be AES-256 encrypted before saving.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_stock')]]).reply_markup,
+        }
+      );
+      return;
+    }
+
+    const newPrice = parseFloat(text);
+    if (isNaN(newPrice) || newPrice < 0) {
+      await ctx.reply(
+        '⚠️ Invalid price. Enter a valid number (e.g. `1500`) or type `skip` to keep the current price.',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    // Update price in database
+    await prisma.productVariant.update({
+      where: { id: variantId },
+      data: { price: newPrice },
+    });
+
+    // Advance to stock entry step
+    ctx.session!.adminState = 'AWAITING_STOCK_INPUT';
+    ctx.session!.adminData = { ...adminData, currentPrice: newPrice };
+
+    await ctx.reply(
+      `✅ *Price updated to Rs. ${newPrice.toFixed(2)} PKR!*\n\n` +
+      `📥 *Now send the stock entry for ${productName}:*\n\n` +
+      `Reply with the account / key (e.g. \`email@example.com:password\`)\n\n` +
+      `🔒 It will be AES-256 encrypted before saving.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_stock')]]).reply_markup,
+      }
+    );
     return;
   }
 
