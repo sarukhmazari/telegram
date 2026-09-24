@@ -17,7 +17,7 @@ export class UserService {
   ): Promise<User> {
     const bigTelegramId = BigInt(telegramId);
     const isAdminConfigured = config.ADMIN_IDS.includes(bigTelegramId.toString());
-    const expectedRole: Role = isAdminConfigured ? Role.ADMIN : Role.USER;
+    const initialRole: Role = isAdminConfigured ? Role.OWNER : Role.USER;
 
     let user = await prisma.user.findUnique({
       where: { telegramId: bigTelegramId },
@@ -42,7 +42,7 @@ export class UserService {
           username: username || null,
           firstName: firstName || null,
           lastName: lastName || null,
-          role: expectedRole,
+          role: initialRole,
           referralCode: generatedRefCode,
           referredById: referrerId,
           cart: {
@@ -62,7 +62,7 @@ export class UserService {
 
       logger.info('Registered new user', { userId: user.id, telegramId: bigTelegramId.toString() });
     } else {
-      // Update names, username or role if changed
+      // Update names or username if changed, and ensure config admins have at least ADMIN/OWNER
       let shouldUpdate = false;
       const dataToUpdate: any = {};
 
@@ -78,8 +78,8 @@ export class UserService {
         dataToUpdate.lastName = lastName || null;
         shouldUpdate = true;
       }
-      if (user.role !== expectedRole) {
-        dataToUpdate.role = expectedRole;
+      if (isAdminConfigured && user.role === Role.USER) {
+        dataToUpdate.role = Role.OWNER;
         shouldUpdate = true;
       }
 
@@ -162,6 +162,57 @@ export class UserService {
     return prisma.user.update({
       where: { id: userId },
       data: { isBanned: false },
+    });
+  }
+
+  /**
+   * Search for a user by @username or Telegram ID string
+   */
+  static async findUserByUsernameOrId(query: string): Promise<User | null> {
+    const cleanQuery = query.trim().replace(/^@/, '');
+
+    // Check if numeric (Telegram ID)
+    if (/^\d+$/.test(cleanQuery)) {
+      const byTelegramId = await prisma.user.findUnique({
+        where: { telegramId: BigInt(cleanQuery) },
+      });
+      if (byTelegramId) return byTelegramId;
+    }
+
+    // Search by username (case-insensitive)
+    const byUsername = await prisma.user.findFirst({
+      where: {
+        username: {
+          equals: cleanQuery,
+          mode: 'insensitive',
+        },
+      },
+    });
+
+    return byUsername;
+  }
+
+  /**
+   * Change user role (OWNER, ADMIN, USER)
+   */
+  static async setUserRole(userId: string, role: Role): Promise<User> {
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { role },
+    });
+    logger.info('User role updated', { userId, role });
+    return updated;
+  }
+
+  /**
+   * Get all users who are currently staff (OWNER or ADMIN)
+   */
+  static async getAllStaffUsers(): Promise<User[]> {
+    return prisma.user.findMany({
+      where: {
+        role: { in: [Role.OWNER, Role.ADMIN] },
+      },
+      orderBy: { createdAt: 'asc' },
     });
   }
 }

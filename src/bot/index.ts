@@ -14,6 +14,7 @@ import { UserService } from '../services/userService.js';
 import { ManualPaymentProvider } from '../payments/providers/manualPaymentProvider.js';
 import { WalletPaymentProvider } from '../payments/providers/walletPaymentProvider.js';
 import { DeliveryService } from '../services/deliveryService.js';
+import { PaymentAccountService } from '../services/paymentAccountService.js';
 import { getPaymentReviewKeyboard } from './keyboards/admin.js';
 
 import https from 'https';
@@ -473,14 +474,81 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
     `💰 *Total Amount:* *Rs. ${totalAmount} PKR*\n\n` +
     `💳 *Select your payment method below:*`;
 
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('📱 Pay with JazzCash (03292823218)', `pay_method_jazzcash_${order.id}`)],
-    [Markup.button.callback(`💰 Pay with Wallet Balance (Rs. ${userBalance})`, `pay_method_wallet_${order.id}`)],
-    [
-      Markup.button.callback('⬅️ Cancel Order', 'menu_store'),
-      Markup.button.callback('🏠 Home', 'menu_main'),
-    ],
+  const accounts = await PaymentAccountService.getActiveAccounts();
+  const paymentButtons: any[] = [];
+
+  accounts.forEach((acc) => {
+    paymentButtons.push([
+      Markup.button.callback(
+        `📱 Pay with ${acc.providerName} (${acc.accountNumber})`,
+        `pay_method_acc_${acc.id}_${order.id}`
+      ),
+    ]);
+  });
+
+  if (paymentButtons.length === 0) {
+    paymentButtons.push([
+      Markup.button.callback('📱 Pay with JazzCash (03292823218)', `pay_method_jazzcash_${order.id}`),
+    ]);
+  }
+
+  paymentButtons.push([
+    Markup.button.callback(`💰 Pay with Wallet Balance (Rs. ${userBalance})`, `pay_method_wallet_${order.id}`),
   ]);
+
+  paymentButtons.push([
+    Markup.button.callback('⬅️ Cancel Order', 'menu_store'),
+    Markup.button.callback('🏠 Home', 'menu_main'),
+  ]);
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: Markup.inlineKeyboard(paymentButtons).reply_markup,
+  });
+});
+
+// 📱 Pay via Dynamic Payment Account — Show Payment Instructions
+bot.action(/^pay_method_acc_(.+)_(.+)$/, async (ctx) => {
+  const accountId = ctx.match[1];
+  const orderId = ctx.match[2];
+
+  const order = await OrderService.getOrderById(orderId);
+  if (!order) {
+    await ctx.answerCbQuery('Order not found.');
+    return;
+  }
+
+  const account = await PaymentAccountService.getAccountById(accountId);
+  const providerName = account?.providerName || 'Manual Transfer';
+  const accountNumber = account?.accountNumber || '03292823218';
+  const accountTitle = account?.accountTitle || 'SARIKH MUREED';
+  const instructions =
+    account?.instructions ||
+    `After completing the transfer, please *reply directly to this chat with your 12-digit Transaction ID (TRX ID)* or send a screenshot of the payment receipt.`;
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.userState = 'AWAITING_PAYMENT_PROOF';
+  ctx.session.userData = {
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    amount: Number(order.totalAmount).toFixed(2),
+    providerName,
+    accountNumber,
+    accountTitle,
+  };
+
+  const msg =
+    `💳 *${providerName} Payment Instructions*\n\n` +
+    `Please transfer the total amount to our ${providerName} account:\n\n` +
+    `• *Payment Method:* ${providerName}\n` +
+    `• *Account Number / IBAN:* \`${accountNumber}\`\n` +
+    `• *Account Title:* \`${accountTitle}\`\n` +
+    `• *Amount to Transfer:* *Rs. ${Number(order.totalAmount).toFixed(2)} PKR*\n` +
+    `• *Order Number:* \`#${order.orderNumber}\`\n\n` +
+    `📌 *Instructions:*\n` +
+    `${instructions}`;
+
+  const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'menu_main')]]);
 
   await ctx.editMessageText(msg, {
     parse_mode: 'Markdown',
@@ -488,7 +556,7 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
   });
 });
 
-// 📱 Pay via JazzCash — Show Payment Instructions
+// 📱 Legacy / Direct Pay via JazzCash fallback
 bot.action(/^pay_method_jazzcash_(.+)$/, async (ctx) => {
   const orderId = ctx.match[1];
   const order = await OrderService.getOrderById(orderId);
@@ -499,7 +567,14 @@ bot.action(/^pay_method_jazzcash_(.+)$/, async (ctx) => {
 
   if (!ctx.session) ctx.session = {};
   ctx.session.userState = 'AWAITING_PAYMENT_PROOF';
-  ctx.session.userData = { orderId: order.id, orderNumber: order.orderNumber, amount: Number(order.totalAmount).toFixed(2) };
+  ctx.session.userData = {
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    amount: Number(order.totalAmount).toFixed(2),
+    providerName: 'JazzCash',
+    accountNumber: '03292823218',
+    accountTitle: 'SARIKH MUREED',
+  };
 
   const msg =
     `💳 *JazzCash Payment Instructions*\n\n` +
@@ -512,9 +587,7 @@ bot.action(/^pay_method_jazzcash_(.+)$/, async (ctx) => {
     `📌 *Instructions:*\n` +
     `After completing the transfer, please *reply directly to this chat with your 12-digit JazzCash Transaction ID (TRX ID)* or send a screenshot of the payment receipt.`;
 
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('❌ Cancel', 'menu_main')],
-  ]);
+  const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'menu_main')]]);
 
   await ctx.editMessageText(msg, {
     parse_mode: 'Markdown',
@@ -603,14 +676,17 @@ bot.on(['text', 'photo'], async (ctx, next) => {
       }
     );
 
-    // Notify Admin with 1-click Approve / Reject buttons
     const adminIds = config.ADMIN_IDS;
+    const providerStr = ctx.session.userData?.providerName || 'Manual Transfer';
+    const accNumberStr = ctx.session.userData?.accountNumber || '';
+    const accTitleStr = ctx.session.userData?.accountTitle || '';
+
     const adminMsg =
       `💳 *New Payment Proof Received!*\n\n` +
       `• *Order Number:* \`#${orderNumber}\` \n` +
       `• *Customer:* ${user.username ? '@' + user.username : user.firstName || user.id} (ID: \`${user.telegramId.toString()}\`)\n` +
       `• *Amount:* *Rs. ${amount} PKR*\n` +
-      `• *Method:* JazzCash (\`03292823218\` - \`SARIKH MUREED\`)\n` +
+      `• *Method:* ${providerStr} ${accNumberStr ? `(\`${accNumberStr}\` - \`${accTitleStr}\`)` : ''}\n` +
       `• *TRX Proof:* \`${trxRef}\``;
 
     const adminKeyboard = getPaymentReviewKeyboard(paymentResult.paymentId);
@@ -641,6 +717,7 @@ bot.on(['text', 'photo'], async (ctx, next) => {
 });
 export async function startBot() {
   await connectDatabase();
+  await PaymentAccountService.seedDefaultIfEmpty();
 
   if (config.BOT_MODE === 'webhook' && config.WEBHOOK_URL) {
     logger.info(`Starting bot in WEBHOOK mode at ${config.WEBHOOK_URL}`);

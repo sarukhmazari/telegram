@@ -6,13 +6,20 @@ import {
   getPaymentReviewKeyboard,
   getAdminProductsKeyboard,
   getAdminCategoriesKeyboard,
+  getBotSettingsKeyboard,
+  getPaymentAccountsKeyboard,
+  getPaymentAccountDetailKeyboard,
+  getRolesManagementKeyboard,
+  getRoleAssignmentKeyboard,
 } from '../keyboards/admin.js';
 import { AdminService } from '../../services/adminService.js';
 import { ProductService } from '../../services/productService.js';
 import { BroadcastService } from '../../services/broadcastService.js';
+import { PaymentAccountService } from '../../services/paymentAccountService.js';
+import { UserService } from '../../services/userService.js';
 import { prisma } from '../../database/index.js';
 import { logger } from '../../utils/logger.js';
-import { PaymentStatus, DeliveryType } from '@prisma/client';
+import { PaymentStatus, DeliveryType, Role } from '@prisma/client';
 
 export const adminComposer = new Composer<BotContext>();
 
@@ -533,6 +540,352 @@ adminComposer.action(/^admin_assign_stock_(.+)$/, async (ctx) => {
   });
 });
 
+// 🤖 Bot Settings Screen
+adminComposer.action('admin_bot_settings', async (ctx) => {
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+  const me = await ctx.telegram.getMe();
+
+  const msg =
+    `🤖 *Bot Settings*\n\n` +
+    `Current bot info:\n` +
+    `• *Name:* ${me.first_name}\n` +
+    `• *Username:* @${me.username}\n\n` +
+    `Select a setting below to update it:`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: getBotSettingsKeyboard().reply_markup,
+  });
+});
+
+// 📛 Change Bot Name — Prompt
+adminComposer.action('admin_change_name', async (ctx) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_BOT_NAME';
+
+  await ctx.editMessageText(
+    `📛 *Change Bot Name*\n\nReply with the new display name for the bot (e.g. \`MazariShop 🛒\`).\n\n_Max 64 characters._`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]]).reply_markup,
+    }
+  );
+});
+
+// 📝 Change Bot Description — Prompt
+adminComposer.action('admin_change_description', async (ctx) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_BOT_DESCRIPTION';
+
+  await ctx.editMessageText(
+    `📝 *Change Bot Description*\n\nThis text is shown on the empty chat screen when a user opens the bot for the first time.\n\nReply with the new description.\n\n_Max 512 characters._`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]]).reply_markup,
+    }
+  );
+});
+
+// 💬 Change Bot Short Description — Prompt
+adminComposer.action('admin_change_short_desc', async (ctx) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_BOT_SHORT_DESC';
+
+  await ctx.editMessageText(
+    `💬 *Change Bot Short Description*\n\nThis text appears in search results and share links.\n\nReply with the new short description.\n\n_Max 120 characters._`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]]).reply_markup,
+    }
+  );
+});
+
+// 🖼 Change Bot Profile Photo — Info (Telegram API limitation)
+adminComposer.action('admin_change_photo', async (ctx) => {
+  await ctx.editMessageText(
+    `🖼 *Change Bot Profile Photo*\n\n` +
+    `⚠️ *Telegram does not allow bots to change their own profile photo via the API.*\n\n` +
+    `To update the bot\'s profile picture, please use *BotFather*:\n\n` +
+    `1️⃣ Open [@BotFather](https://t.me/BotFather)\n` +
+    `2️⃣ Send /setuserpic\n` +
+    `3️⃣ Select your bot and send the new photo`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')]]).reply_markup,
+    }
+  );
+});
+
+// 💳 Payment Accounts List
+adminComposer.action('admin_payment_accounts', async (ctx) => {
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+  const accounts = await PaymentAccountService.getAllAccounts();
+
+  const msg =
+    `💳 *Payment Accounts Management*\n\n` +
+    `Configure manual transfer accounts (JazzCash, EasyPaisa, Bank accounts, etc.) shown to customers at checkout.\n\n` +
+    `Active accounts count: *${accounts.filter((a) => a.isEnabled).length}*`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: getPaymentAccountsKeyboard(accounts).reply_markup,
+  });
+});
+
+// 💳 View Single Payment Account
+adminComposer.action(/^admin_payacc_view_(.+)$/, async (ctx) => {
+  const accountId = ctx.match[1];
+  const account = await PaymentAccountService.getAccountById(accountId);
+
+  if (!account) {
+    await ctx.answerCbQuery('Payment account not found.');
+    return;
+  }
+
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+
+  const msg =
+    `💳 *Payment Account Details*\n\n` +
+    `• *Provider:* ${account.providerName}\n` +
+    `• *Account Number / IBAN:* \`${account.accountNumber}\`\n` +
+    `• *Account Title:* *${account.accountTitle}*\n` +
+    `• *Status:* ${account.isEnabled ? '✅ Enabled (Visible at checkout)' : '⏸ Disabled (Hidden)'}\n` +
+    `• *Instructions:* ${account.instructions || '_(Default checkout instructions)_'}`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: getPaymentAccountDetailKeyboard(account).reply_markup,
+  });
+});
+
+// ✏️ Edit Account Number
+adminComposer.action(/^admin_payacc_edit_num_(.+)$/, async (ctx) => {
+  const accountId = ctx.match[1];
+  const account = await PaymentAccountService.getAccountById(accountId);
+  if (!account) return;
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_PAYACC_NUMBER';
+  ctx.session.adminData = { accountId };
+
+  await ctx.editMessageText(
+    `✏️ *Edit Account Number — ${account.providerName}*\n\nCurrent: \`${account.accountNumber}\`\n\nReply with the new account number / IBAN:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancel', `admin_payacc_view_${accountId}`)],
+      ]).reply_markup,
+    }
+  );
+});
+
+// 🏷 Edit Account Title
+adminComposer.action(/^admin_payacc_edit_title_(.+)$/, async (ctx) => {
+  const accountId = ctx.match[1];
+  const account = await PaymentAccountService.getAccountById(accountId);
+  if (!account) return;
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_PAYACC_TITLE';
+  ctx.session.adminData = { accountId };
+
+  await ctx.editMessageText(
+    `🏷 *Edit Account Title — ${account.providerName}*\n\nCurrent: *${account.accountTitle}*\n\nReply with the new account holder title / name:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancel', `admin_payacc_view_${accountId}`)],
+      ]).reply_markup,
+    }
+  );
+});
+
+// 📝 Edit Account Instructions
+adminComposer.action(/^admin_payacc_edit_instr_(.+)$/, async (ctx) => {
+  const accountId = ctx.match[1];
+  const account = await PaymentAccountService.getAccountById(accountId);
+  if (!account) return;
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_PAYACC_INSTRUCTIONS';
+  ctx.session.adminData = { accountId };
+
+  await ctx.editMessageText(
+    `📝 *Edit Instructions — ${account.providerName}*\n\nCurrent:\n${account.instructions || '_(None)_'}\n\nReply with the new instructions, or send \`clear\` to reset:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancel', `admin_payacc_view_${accountId}`)],
+      ]).reply_markup,
+    }
+  );
+});
+
+// 🔄 Toggle Account Status
+adminComposer.action(/^admin_payacc_toggle_(.+)$/, async (ctx) => {
+  const accountId = ctx.match[1];
+  const updated = await PaymentAccountService.toggleAccount(accountId);
+
+  await ctx.answerCbQuery(
+    updated.isEnabled ? '✅ Account enabled for checkout' : '⏸ Account disabled'
+  );
+
+  const msg =
+    `💳 *Payment Account Details*\n\n` +
+    `• *Provider:* ${updated.providerName}\n` +
+    `• *Account Number / IBAN:* \`${updated.accountNumber}\`\n` +
+    `• *Account Title:* *${updated.accountTitle}*\n` +
+    `• *Status:* ${updated.isEnabled ? '✅ Enabled (Visible at checkout)' : '⏸ Disabled (Hidden)'}\n` +
+    `• *Instructions:* ${updated.instructions || '_(Default checkout instructions)_'}`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: getPaymentAccountDetailKeyboard(updated).reply_markup,
+  });
+});
+
+// 🗑 Delete Account
+adminComposer.action(/^admin_payacc_delete_(.+)$/, async (ctx) => {
+  const accountId = ctx.match[1];
+  await PaymentAccountService.deleteAccount(accountId);
+  await ctx.answerCbQuery('🗑 Account deleted successfully.');
+
+  const accounts = await PaymentAccountService.getAllAccounts();
+  const msg =
+    `💳 *Payment Accounts Management*\n\n` +
+    `Account was deleted.\n\n` +
+    `Configure manual transfer accounts shown to customers at checkout.\n` +
+    `Active accounts: *${accounts.filter((a) => a.isEnabled).length}*`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: getPaymentAccountsKeyboard(accounts).reply_markup,
+  });
+});
+
+// ➕ Add New Payment Account Wizard — Step 1: Provider Name
+adminComposer.action('admin_payacc_add', async (ctx) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_NEW_PAYACC_PROVIDER';
+  ctx.session.adminData = {};
+
+  await ctx.editMessageText(
+    `➕ *Add Payment Account (Step 1/4)*\n\nReply with the *Provider / Bank Name* (e.g. \`JazzCash\`, \`EasyPaisa\`, \`Meezan Bank\`, \`SadaPay\`, \`Nayapay\`, \`Binance USDT\`):`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancel', 'admin_payment_accounts')],
+      ]).reply_markup,
+    }
+  );
+});
+
+// 🛡 Staff & Roles Management Screen
+adminComposer.action('admin_roles', async (ctx) => {
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+
+  const staffUsers = await UserService.getAllStaffUsers();
+
+  const msg =
+    `🛡 *Staff & Roles Management*\n\n` +
+    `Manage bot administrators and owners.\n\n` +
+    `👑 *Owner:* Full access to bot, role assignments, and all admin tools.\n` +
+    `🛡 *Admin:* Access to products, stock, orders, payments, broadcasts.\n\n` +
+    `Current Staff Members (${staffUsers.length}):`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: getRolesManagementKeyboard(staffUsers).reply_markup,
+  });
+});
+
+// 🛡 View Single Staff Member / Role Assignment
+adminComposer.action(/^admin_roles_view_(.+)$/, async (ctx) => {
+  const userId = ctx.match[1];
+  const user = await UserService.getUserById(userId);
+
+  if (!user) {
+    await ctx.answerCbQuery('User not found.');
+    return;
+  }
+
+  const userDisplay = user.username ? `@${user.username}` : (user.firstName || user.id);
+  const msg =
+    `👤 *Staff Member Profile*\n\n` +
+    `• *Name/Handle:* ${userDisplay}\n` +
+    `• *Telegram ID:* \`${user.telegramId.toString()}\`\n` +
+    `• *Current Role:* *${user.role}*\n` +
+    `• *Joined:* ${new Date(user.createdAt).toLocaleDateString()}\n\n` +
+    `Select a role below to assign:`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: getRoleAssignmentKeyboard(user.id).reply_markup,
+  });
+});
+
+// ➕ Add / Change User Role — Prompt
+adminComposer.action('admin_roles_add', async (ctx) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_USER_LOOKUP_FOR_ROLE';
+
+  await ctx.editMessageText(
+    `➕ *Assign Staff Role*\n\nPlease reply with the *Telegram @username* or numeric *Telegram ID* of the user you wish to promote or manage:\n\nExample: \`@username\` or \`123456789\``,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancel', 'admin_roles')],
+      ]).reply_markup,
+    }
+  );
+});
+
+// 👑 / 🛡 / 👤 Role Assignment Execution Action
+adminComposer.action(/^admin_roles_set_([A-Z]+)_(.+)$/, async (ctx) => {
+  const targetRole = ctx.match[1] as Role;
+  const targetUserId = ctx.match[2];
+
+  if (!['OWNER', 'ADMIN', 'USER'].includes(targetRole)) {
+    await ctx.answerCbQuery('Invalid role specified.');
+    return;
+  }
+
+  try {
+    const updated = await UserService.setUserRole(targetUserId, targetRole);
+    const userDisplay = updated.username ? `@${updated.username}` : (updated.firstName || updated.id);
+
+    await ctx.answerCbQuery(`✅ Role set to ${targetRole}!`, { show_alert: true });
+
+    const msg =
+      `✅ *Role Updated Successfully!*\n\n` +
+      `• *User:* ${userDisplay} (\`${updated.telegramId.toString()}\`)\n` +
+      `• *New Role:* *${updated.role}*`;
+
+    await ctx.editMessageText(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback('🛡 Staff & Roles', 'admin_roles')],
+        [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+      ]).reply_markup,
+    });
+  } catch (err: any) {
+    logger.error('Failed to set user role', { error: err.message });
+    await ctx.answerCbQuery(`⚠️ Error: ${err.message}`, { show_alert: true });
+  }
+});
+
 // 📩 Message Listener (Text & Photo) for Admin Input Wizard & Broadcasts
 adminComposer.on(['text', 'photo'], async (ctx, next) => {
   const state = ctx.session?.adminState;
@@ -549,6 +902,233 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     if (ctx.message.caption) {
       text = ctx.message.caption.trim();
     }
+  }
+
+  // 🤖 Bot Settings Wizard — Change Bot Name
+  if (state === 'AWAITING_BOT_NAME') {
+    if (!text || text.length > 64) {
+      await ctx.reply('⚠️ Bot name must be between 1 and 64 characters. Please try again.');
+      return;
+    }
+    try {
+      await ctx.telegram.setMyName(text);
+      ctx.session!.adminState = undefined;
+      await ctx.reply(`✅ *Bot name updated to:* ${text}`, {
+        parse_mode: 'Markdown',
+        reply_markup: getBotSettingsKeyboard().reply_markup,
+      });
+    } catch (err: any) {
+      logger.error('Failed to set bot name', { error: err.message });
+      await ctx.reply(`⚠️ Failed to update bot name: ${err.message}`);
+    }
+    return;
+  }
+
+  // 🤖 Bot Settings Wizard — Change Bot Description
+  if (state === 'AWAITING_BOT_DESCRIPTION') {
+    if (text.length > 512) {
+      await ctx.reply('⚠️ Description must be 512 characters or fewer. Please shorten it and try again.');
+      return;
+    }
+    try {
+      await ctx.telegram.setMyDescription(text);
+      ctx.session!.adminState = undefined;
+      await ctx.reply(`✅ *Bot description updated successfully!*`, {
+        parse_mode: 'Markdown',
+        reply_markup: getBotSettingsKeyboard().reply_markup,
+      });
+    } catch (err: any) {
+      logger.error('Failed to set bot description', { error: err.message });
+      await ctx.reply(`⚠️ Failed to update bot description: ${err.message}`);
+    }
+    return;
+  }
+
+  // 🤖 Bot Settings Wizard — Change Bot Short Description
+  if (state === 'AWAITING_BOT_SHORT_DESC') {
+    if (text.length > 120) {
+      await ctx.reply('⚠️ Short description must be 120 characters or fewer. Please shorten it and try again.');
+      return;
+    }
+    try {
+      await ctx.telegram.setMyShortDescription(text);
+      ctx.session!.adminState = undefined;
+      await ctx.reply(`✅ *Bot short description updated successfully!*`, {
+        parse_mode: 'Markdown',
+        reply_markup: getBotSettingsKeyboard().reply_markup,
+      });
+    } catch (err: any) {
+      logger.error('Failed to set bot short description', { error: err.message });
+      await ctx.reply(`⚠️ Failed to update short description: ${err.message}`);
+    }
+    return;
+  }
+
+  // 💳 Edit Payment Account Number
+  if (state === 'AWAITING_PAYACC_NUMBER' && adminData.accountId) {
+    if (!text) {
+      await ctx.reply('⚠️ Please send a valid account number.');
+      return;
+    }
+    const updated = await PaymentAccountService.updateAccount(adminData.accountId, { accountNumber: text });
+    ctx.session!.adminState = undefined;
+    ctx.session!.adminData = undefined;
+
+    await ctx.reply(`✅ *Account number updated to:* \`${text}\``, {
+      parse_mode: 'Markdown',
+      reply_markup: getPaymentAccountDetailKeyboard(updated).reply_markup,
+    });
+    return;
+  }
+
+  // 💳 Edit Payment Account Title
+  if (state === 'AWAITING_PAYACC_TITLE' && adminData.accountId) {
+    if (!text) {
+      await ctx.reply('⚠️ Please send a valid account title.');
+      return;
+    }
+    const updated = await PaymentAccountService.updateAccount(adminData.accountId, { accountTitle: text });
+    ctx.session!.adminState = undefined;
+    ctx.session!.adminData = undefined;
+
+    await ctx.reply(`✅ *Account title updated to:* *${text}*`, {
+      parse_mode: 'Markdown',
+      reply_markup: getPaymentAccountDetailKeyboard(updated).reply_markup,
+    });
+    return;
+  }
+
+  // 💳 Edit Payment Account Instructions
+  if (state === 'AWAITING_PAYACC_INSTRUCTIONS' && adminData.accountId) {
+    const instr = text.toLowerCase() === 'clear' ? null : text;
+    const updated = await PaymentAccountService.updateAccount(adminData.accountId, { instructions: instr });
+    ctx.session!.adminState = undefined;
+    ctx.session!.adminData = undefined;
+
+    await ctx.reply(`✅ *Instructions updated successfully!*`, {
+      parse_mode: 'Markdown',
+      reply_markup: getPaymentAccountDetailKeyboard(updated).reply_markup,
+    });
+    return;
+  }
+
+  // 💳 Add Payment Account — Step 1 -> Step 2 (Number)
+  if (state === 'AWAITING_NEW_PAYACC_PROVIDER') {
+    if (!text) {
+      await ctx.reply('⚠️ Please enter a provider name (e.g. `JazzCash`).');
+      return;
+    }
+    adminData.providerName = text;
+    ctx.session!.adminData = adminData;
+    ctx.session!.adminState = 'AWAITING_NEW_PAYACC_NUMBER';
+
+    await ctx.reply(
+      `✅ Provider: *${text}*\n\n*(Step 2/4)* Now reply with the *Account Number / IBAN*:`,
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  // 💳 Add Payment Account — Step 2 -> Step 3 (Title)
+  if (state === 'AWAITING_NEW_PAYACC_NUMBER') {
+    if (!text) {
+      await ctx.reply('⚠️ Please enter an account number.');
+      return;
+    }
+    adminData.accountNumber = text;
+    ctx.session!.adminData = adminData;
+    ctx.session!.adminState = 'AWAITING_NEW_PAYACC_TITLE';
+
+    await ctx.reply(
+      `✅ Account Number: \`${text}\`\n\n*(Step 3/4)* Now reply with the *Account Title / Account Holder Name*:`,
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  // 💳 Add Payment Account — Step 3 -> Step 4 (Instructions)
+  if (state === 'AWAITING_NEW_PAYACC_TITLE') {
+    if (!text) {
+      await ctx.reply('⚠️ Please enter an account title.');
+      return;
+    }
+    adminData.accountTitle = text;
+    ctx.session!.adminData = adminData;
+    ctx.session!.adminState = 'AWAITING_NEW_PAYACC_INSTRUCTIONS';
+
+    await ctx.reply(
+      `✅ Account Title: *${text}*\n\n*(Final Step)* Reply with *Transfer Instructions* for the customer, or type \`skip\` to use defaults:`,
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  // 💳 Add Payment Account — Step 4 -> Create Account
+  if (state === 'AWAITING_NEW_PAYACC_INSTRUCTIONS') {
+    const instructions = text.toLowerCase() === 'skip' ? undefined : text;
+    const { providerName, accountNumber, accountTitle } = adminData;
+
+    const created = await PaymentAccountService.createAccount({
+      providerName,
+      accountNumber,
+      accountTitle,
+      instructions,
+    });
+
+    ctx.session!.adminState = undefined;
+    ctx.session!.adminData = undefined;
+
+    const accounts = await PaymentAccountService.getAllAccounts();
+
+    await ctx.reply(
+      `🎉 *Payment Account Added Successfully!*\n\n` +
+        `• *Provider:* ${created.providerName}\n` +
+        `• *Account Number:* \`${created.accountNumber}\`\n` +
+        `• *Title:* *${created.accountTitle}*\n` +
+        `• *Status:* ✅ Active`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: getPaymentAccountsKeyboard(accounts).reply_markup,
+      }
+    );
+    return;
+  }
+
+  // 🛡 Staff & Roles — User Lookup
+  if (state === 'AWAITING_USER_LOOKUP_FOR_ROLE') {
+    if (!text) {
+      await ctx.reply('⚠️ Please reply with a valid @username or numeric Telegram ID.');
+      return;
+    }
+
+    const foundUser = await UserService.findUserByUsernameOrId(text);
+    if (!foundUser) {
+      await ctx.reply(
+        `⚠️ User \`${text}\` not found in the bot database.\n\nMake sure the user has started the bot at least once (by sending /start), or check the username/ID and try again.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Staff', 'admin_roles')]]).reply_markup,
+        }
+      );
+      return;
+    }
+
+    ctx.session!.adminState = undefined;
+    ctx.session!.adminData = undefined;
+
+    const userDisplay = foundUser.username ? `@${foundUser.username}` : (foundUser.firstName || foundUser.id);
+    const lookupMsg =
+      `👤 *User Found: ${userDisplay}*\n\n` +
+      `• *Telegram ID:* \`${foundUser.telegramId.toString()}\`\n` +
+      `• *Current Role:* *${foundUser.role}*\n` +
+      `• *Balance:* Rs. ${Number(foundUser.balance).toFixed(2)}\n\n` +
+      `Select a new role to assign:`;
+
+    await ctx.reply(lookupMsg, {
+      parse_mode: 'Markdown',
+      reply_markup: getRoleAssignmentKeyboard(foundUser.id).reply_markup,
+    });
+    return;
   }
 
   // 📢 Broadcast Wizard — Broadcast Message Input State

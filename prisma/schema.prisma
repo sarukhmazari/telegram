@@ -6,14 +6,14 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 enum Role {
   USER
   ADMIN
+  OWNER
 }
 
 enum ProductStatus {
@@ -423,3 +423,19 @@ model AdminLog {
 
   createdAt DateTime @default(now())
 }
+
+model PaymentAccount {
+  id            String   @id @default(uuid())
+  providerName  String   // e.g. "JazzCash", "EasyPaisa", "Bank Account"
+  accountNumber String   // e.g. "03292823218"
+  accountTitle  String   // e.g. "SARIKH MUREED"
+  instructions  String?  // Instructions or notes shown to user
+  isEnabled     Boolean  @default(true)
+  position      Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isEnabled])
+}
+

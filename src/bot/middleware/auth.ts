@@ -33,7 +33,9 @@ export const authMiddleware: MiddlewareFn<BotContext> = async (ctx, next) => {
     }
 
     ctx.dbUser = dbUser;
-    ctx.isAdmin = dbUser.role === Role.ADMIN || config.ADMIN_IDS.includes(ctx.from.id.toString());
+    const isRootAdmin = config.ADMIN_IDS.includes(ctx.from.id.toString());
+    ctx.isAdmin = dbUser.role === Role.ADMIN || dbUser.role === Role.OWNER || isRootAdmin;
+    ctx.isOwner = dbUser.role === Role.OWNER || isRootAdmin;
 
     return next();
   } catch (error) {

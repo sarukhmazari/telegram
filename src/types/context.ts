@@ -15,4 +15,5 @@ export interface BotContext extends Context {
   session?: SessionData;
   dbUser?: User;
   isAdmin?: boolean;
+  isOwner?: boolean;
 }
