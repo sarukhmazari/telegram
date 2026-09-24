@@ -17,8 +17,8 @@ export function getAdminMainKeyboard() {
 export function getBotSettingsKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback('📛 Change Bot Name', 'admin_change_name')],
+    [Markup.button.callback('💬 Change Bio / About', 'admin_change_short_desc')],
     [Markup.button.callback('📝 Change Description', 'admin_change_description')],
-    [Markup.button.callback('💬 Change Short Description', 'admin_change_short_desc')],
     [Markup.button.callback('🖼 Change Profile Photo', 'admin_change_photo')],
     [Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')],
   ]);

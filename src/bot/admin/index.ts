@@ -547,13 +547,21 @@ adminComposer.action('admin_bot_settings', async (ctx) => {
     ctx.session.adminData = undefined;
   }
   const me = await ctx.telegram.getMe();
+  const shortDescObj = await ctx.telegram.getMyShortDescription().catch(() => ({ short_description: '' }));
+  const descObj = await ctx.telegram.getMyDescription().catch(() => ({ description: '' }));
+
+  const currentBio = shortDescObj.short_description || '_(Not set)_';
+  const currentDesc = descObj.description
+    ? (descObj.description.length > 80 ? descObj.description.substring(0, 80) + '...' : descObj.description)
+    : '_(Not set)_';
 
   const msg =
-    `🤖 *Bot Settings*\n\n` +
-    `Current bot info:\n` +
+    `🤖 *Bot Profile & Settings*\n\n` +
     `• *Name:* ${me.first_name}\n` +
-    `• *Username:* @${me.username}\n\n` +
-    `Select a setting below to update it:`;
+    `• *Username:* @${me.username}\n` +
+    `• *Bio / About:* ${currentBio}\n` +
+    `• *Chat Description:* ${currentDesc}\n\n` +
+    `Select a setting below to update:`;
 
   await ctx.editMessageText(msg, {
     parse_mode: 'Markdown',
@@ -589,13 +597,13 @@ adminComposer.action('admin_change_description', async (ctx) => {
   );
 });
 
-// 💬 Change Bot Short Description — Prompt
+// 💬 Change Bot Bio / Short Description — Prompt
 adminComposer.action('admin_change_short_desc', async (ctx) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_BOT_SHORT_DESC';
 
   await ctx.editMessageText(
-    `💬 *Change Bot Short Description*\n\nThis text appears in search results and share links.\n\nReply with the new short description.\n\n_Max 120 characters._`,
+    `💬 *Change Bot Bio / About*\n\nThis is the **Bio** shown on your bot's profile page and in search/share previews.\n\nReply with the new bio (or type \`clear\` to remove).\n\n_Max 120 characters._`,
     {
       parse_mode: 'Markdown',
       reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]]).reply_markup,
@@ -944,22 +952,27 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     return;
   }
 
-  // 🤖 Bot Settings Wizard — Change Bot Short Description
+  // 🤖 Bot Settings Wizard — Change Bot Bio / Short Description
   if (state === 'AWAITING_BOT_SHORT_DESC') {
     if (text.length > 120) {
-      await ctx.reply('⚠️ Short description must be 120 characters or fewer. Please shorten it and try again.');
+      await ctx.reply('⚠️ Bio must be 120 characters or fewer. Please shorten it and try again.');
       return;
     }
+    const newBio = text.toLowerCase() === 'clear' ? '' : text;
     try {
-      await ctx.telegram.setMyShortDescription(text);
+      await ctx.telegram.setMyShortDescription(newBio);
       ctx.session!.adminState = undefined;
-      await ctx.reply(`✅ *Bot short description updated successfully!*`, {
+      const successText = newBio
+        ? `✅ *Bot Bio updated to:*\n"${newBio}"`
+        : `✅ *Bot Bio cleared successfully!*`;
+
+      await ctx.reply(successText, {
         parse_mode: 'Markdown',
         reply_markup: getBotSettingsKeyboard().reply_markup,
       });
     } catch (err: any) {
-      logger.error('Failed to set bot short description', { error: err.message });
-      await ctx.reply(`⚠️ Failed to update short description: ${err.message}`);
+      logger.error('Failed to set bot bio', { error: err.message });
+      await ctx.reply(`⚠️ Failed to update bot bio: ${err.message}`);
     }
     return;
   }
