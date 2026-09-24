@@ -11,6 +11,7 @@ import {
   getPaymentAccountDetailKeyboard,
   getRolesManagementKeyboard,
   getRoleAssignmentKeyboard,
+  getPreAuthRoleKeyboard,
 } from '../keyboards/admin.js';
 import { AdminService } from '../../services/adminService.js';
 import { ProductService } from '../../services/productService.js';
@@ -894,6 +895,50 @@ adminComposer.action(/^admin_roles_set_([A-Z]+)_(.+)$/, async (ctx) => {
   }
 });
 
+// 📥 Pre-Auth Role Assignment — for users who haven't started the bot yet
+adminComposer.action(/^admin_preauth_([A-Z]+)_(.+)$/, async (ctx) => {
+  const targetRole = ctx.match[1] as Role;
+  const encodedQuery = ctx.match[2];
+
+  if (!['OWNER', 'ADMIN'].includes(targetRole)) {
+    await ctx.answerCbQuery('Invalid role specified.');
+    return;
+  }
+
+  let rawQuery: string;
+  try {
+    rawQuery = Buffer.from(encodedQuery, 'base64').toString('utf8');
+  } catch {
+    await ctx.answerCbQuery('⚠️ Invalid data. Please try again.', { show_alert: true });
+    return;
+  }
+
+  try {
+    const adminId = ctx.dbUser?.id;
+    const preAuth = await UserService.preAuthorizeStaff(rawQuery, targetRole, adminId);
+    const displayQuery = rawQuery.startsWith('\d') ? rawQuery : `@${rawQuery}`;
+
+    await ctx.answerCbQuery(`✅ Pre-authorized as ${targetRole}!`, { show_alert: true });
+
+    const msg =
+      `✅ *Pre-Authorization Saved!*\n\n` +
+      `• *User:* \`${rawQuery}\`\n` +
+      `• *Role:* *${targetRole}*\n\n` +
+      `When this user sends /start to the bot, they will automatically receive the *${targetRole}* role.`;
+
+    await ctx.editMessageText(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback('🛡 Staff & Roles', 'admin_roles')],
+        [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+      ]).reply_markup,
+    });
+  } catch (err: any) {
+    logger.error('Failed to pre-authorize staff', { error: err.message });
+    await ctx.answerCbQuery(`⚠️ Error: ${err.message}`, { show_alert: true });
+  }
+});
+
 // 📩 Message Listener (Text & Photo) for Admin Input Wizard & Broadcasts
 adminComposer.on(['text', 'photo'], async (ctx, next) => {
   const state = ctx.session?.adminState;
@@ -1116,11 +1161,19 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
 
     const foundUser = await UserService.findUserByUsernameOrId(text);
     if (!foundUser) {
+      // User not in DB yet — offer to pre-authorize them
+      const cleanQuery = text.trim().replace(/^@/, '');
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+
       await ctx.reply(
-        `⚠️ User \`${text}\` not found in the bot database.\n\nMake sure the user has started the bot at least once (by sending /start), or check the username/ID and try again.`,
+        `💡 *User \`${text}\` is not in the bot database yet.*\n\n` +
+        `This means they have not sent /start to the bot.\n\n` +
+        `You can **pre-authorize** them now. When they send /start, the role will be applied automatically.\n\n` +
+        `Choose a role to pre-assign:`,
         {
           parse_mode: 'Markdown',
-          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Staff', 'admin_roles')]]).reply_markup,
+          reply_markup: getPreAuthRoleKeyboard(cleanQuery).reply_markup,
         }
       );
       return;

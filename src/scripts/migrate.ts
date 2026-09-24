@@ -4,37 +4,29 @@ async function main() {
   console.log('Connecting to database...');
   await prisma.$connect();
 
-  console.log('Adding OWNER to Role enum if not exists...');
-  try {
-    await prisma.$executeRawUnsafe(`ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'OWNER';`);
-    console.log('✅ Role enum updated.');
-  } catch (err: any) {
-    console.log('Note on Role enum:', err.message);
-  }
-
-  console.log('Creating PaymentAccount table if not exists...');
+  console.log('Creating PreAuthorizedStaff table if not exists...');
   try {
     await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS "PaymentAccount" (
+      CREATE TABLE IF NOT EXISTS "PreAuthorizedStaff" (
         "id" TEXT NOT NULL,
-        "providerName" TEXT NOT NULL,
-        "accountNumber" TEXT NOT NULL,
-        "accountTitle" TEXT NOT NULL,
-        "instructions" TEXT,
-        "isEnabled" BOOLEAN NOT NULL DEFAULT true,
-        "position" INTEGER NOT NULL DEFAULT 0,
+        "query" TEXT NOT NULL,
+        "role" "Role" NOT NULL DEFAULT 'ADMIN',
+        "addedBy" TEXT,
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-        CONSTRAINT "PaymentAccount_pkey" PRIMARY KEY ("id")
+        CONSTRAINT "PreAuthorizedStaff_pkey" PRIMARY KEY ("id")
       );
     `);
     await prisma.$executeRawUnsafe(`
-      CREATE INDEX IF NOT EXISTS "PaymentAccount_isEnabled_idx" ON "PaymentAccount"("isEnabled");
+      CREATE UNIQUE INDEX IF NOT EXISTS "PreAuthorizedStaff_query_key" ON "PreAuthorizedStaff"("query");
     `);
-    console.log('✅ PaymentAccount table created.');
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "PreAuthorizedStaff_query_idx" ON "PreAuthorizedStaff"("query");
+    `);
+    console.log('✅ PreAuthorizedStaff table created.');
   } catch (err: any) {
-    console.error('Error creating PaymentAccount table:', err.message);
+    console.error('Error creating PreAuthorizedStaff table:', err.message);
   }
 
   await prisma.$disconnect();

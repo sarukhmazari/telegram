@@ -87,6 +87,19 @@ export function getRoleAssignmentKeyboard(targetUserId: string) {
   ]);
 }
 
+/**
+ * Keyboard shown when the user wasn't in the DB yet — pre-authorize them by @username or ID query.
+ * The callback data uses a base64-encoded query to avoid issues with special characters.
+ */
+export function getPreAuthRoleKeyboard(rawQuery: string) {
+  const encoded = Buffer.from(rawQuery).toString('base64');
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('👑 Pre-authorize as Owner', `admin_preauth_OWNER_${encoded}`)],
+    [Markup.button.callback('🛡 Pre-authorize as Admin', `admin_preauth_ADMIN_${encoded}`)],
+    [Markup.button.callback('❌ Cancel', 'admin_roles')],
+  ]);
+}
+
 export function getAdminProductsKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback('➕ Add New Product', 'admin_add_product')],

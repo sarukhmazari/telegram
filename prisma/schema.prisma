@@ -439,3 +439,15 @@ model PaymentAccount {
   @@index([isEnabled])
 }
 
+model PreAuthorizedStaff {
+  id        String   @id @default(uuid())
+  query     String   @unique // e.g. "trustedseoagency" (lowercase) or numeric telegramId
+  role      Role     @default(ADMIN)
+  addedBy   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([query])
+}
+
+

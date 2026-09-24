@@ -1,7 +1,7 @@
 import { prisma } from '../database/index.js';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-import { Role, TransactionType, User } from '@prisma/client';
+import { Role, TransactionType, User, PreAuthorizedStaff } from '@prisma/client';
 import crypto from 'crypto';
 
 export class UserService {
@@ -36,13 +36,30 @@ export class UserService {
         }
       }
 
+      // Check if this user was pre-authorized via @username or Telegram ID
+      let preAuthRole: Role = initialRole;
+      const preAuthChecks: string[] = [bigTelegramId.toString()];
+      if (username) preAuthChecks.push(username.toLowerCase());
+
+      const preAuth = await prisma.preAuthorizedStaff.findFirst({
+        where: { query: { in: preAuthChecks } },
+      });
+
+      if (preAuth) {
+        // Pre-auth role takes precedence unless user is already a root admin
+        preAuthRole = isAdminConfigured ? Role.OWNER : preAuth.role;
+        // Remove pre-authorization record — it has been consumed
+        await prisma.preAuthorizedStaff.delete({ where: { id: preAuth.id } }).catch(() => {});
+        logger.info('Pre-authorized staff joined', { username, telegramId: bigTelegramId.toString(), role: preAuthRole });
+      }
+
       user = await prisma.user.create({
         data: {
           telegramId: bigTelegramId,
           username: username || null,
           firstName: firstName || null,
           lastName: lastName || null,
-          role: initialRole,
+          role: preAuthRole,
           referralCode: generatedRefCode,
           referredById: referrerId,
           cart: {
@@ -81,6 +98,22 @@ export class UserService {
       if (isAdminConfigured && user.role === Role.USER) {
         dataToUpdate.role = Role.OWNER;
         shouldUpdate = true;
+      }
+
+      // Also check if this existing user has a pending pre-authorization
+      // (e.g. they were added by admin but the record matched a different lookup key)
+      if (!shouldUpdate || !dataToUpdate.role) {
+        const preAuthChecks: string[] = [user.telegramId.toString()];
+        if (username) preAuthChecks.push(username.toLowerCase());
+        const preAuth = await prisma.preAuthorizedStaff.findFirst({
+          where: { query: { in: preAuthChecks } },
+        });
+        if (preAuth && user.role === Role.USER) {
+          dataToUpdate.role = preAuth.role;
+          shouldUpdate = true;
+          await prisma.preAuthorizedStaff.delete({ where: { id: preAuth.id } }).catch(() => {});
+          logger.info('Applied pre-auth role to existing user', { userId: user.id, role: preAuth.role });
+        }
       }
 
       if (shouldUpdate) {
@@ -190,6 +223,35 @@ export class UserService {
     });
 
     return byUsername;
+  }
+
+  /**
+   * Pre-authorize a @username or Telegram ID as staff (for users not yet in the bot).
+   * Uses upsert so re-running with same query just updates the role.
+   */
+  static async preAuthorizeStaff(query: string, role: Role, addedBy?: string): Promise<PreAuthorizedStaff> {
+    const normalizedQuery = query.trim().replace(/^@/, '').toLowerCase();
+    return prisma.preAuthorizedStaff.upsert({
+      where: { query: normalizedQuery },
+      update: { role, addedBy: addedBy || null, updatedAt: new Date() },
+      create: { query: normalizedQuery, role, addedBy: addedBy || null },
+    });
+  }
+
+  /**
+   * Get all pre-authorized staff records (pending — not yet joined)
+   */
+  static async getAllPreAuthorizedStaff(): Promise<PreAuthorizedStaff[]> {
+    return prisma.preAuthorizedStaff.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Delete a pre-authorized staff record by its id
+   */
+  static async deletePreAuthorizedStaff(id: string): Promise<void> {
+    await prisma.preAuthorizedStaff.delete({ where: { id } }).catch(() => {});
   }
 
   /**
