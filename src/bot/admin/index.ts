@@ -18,6 +18,7 @@ import { ProductService } from '../../services/productService.js';
 import { BroadcastService } from '../../services/broadcastService.js';
 import { PaymentAccountService } from '../../services/paymentAccountService.js';
 import { UserService } from '../../services/userService.js';
+import { SettingService } from '../../services/settingService.js';
 import { prisma } from '../../database/index.js';
 import { logger } from '../../utils/logger.js';
 import { PaymentStatus, DeliveryType, Role } from '@prisma/client';
@@ -617,7 +618,7 @@ adminComposer.action('admin_change_photo', async (ctx) => {
   await ctx.editMessageText(
     `🖼 *Change Bot Profile Photo*\n\n` +
     `⚠️ *Telegram does not allow bots to change their own profile photo via the API.*\n\n` +
-    `To update the bot\'s profile picture, please use *BotFather*:\n\n` +
+    `To update the bot's profile picture, please use *BotFather*:\n\n` +
     `1️⃣ Open [@BotFather](https://t.me/BotFather)\n` +
     `2️⃣ Send /setuserpic\n` +
     `3️⃣ Select your bot and send the new photo`,
@@ -626,6 +627,39 @@ adminComposer.action('admin_change_photo', async (ctx) => {
       reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')]]).reply_markup,
     }
   );
+});
+
+// 🌆 Store Banner Photo — Prompt
+adminComposer.action('admin_change_banner', async (ctx) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_BOT_BANNER_PHOTO';
+
+  const currentBannerId = await SettingService.getSetting('banner_photo_file_id');
+  const statusStr = currentBannerId ? '✅ *Banner photo is currently set*' : '❌ *No banner photo set*';
+
+  const msg =
+    `🌆 *Store Welcome Banner Photo*\n\n` +
+    `Status: ${statusStr}\n\n` +
+    `Send/upload an image photo to set or replace the Store Banner image shown when customers open the store main menu.\n\n` +
+    `_To remove the banner photo, press "Clear Banner" below._`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: Markup.inlineKeyboard([
+      [Markup.button.callback('🗑 Clear Banner', 'admin_clear_banner')],
+      [Markup.button.callback('❌ Cancel', 'admin_bot_settings')],
+    ]).reply_markup,
+  });
+});
+
+// 🗑 Clear Store Banner Photo
+adminComposer.action('admin_clear_banner', async (ctx) => {
+  await SettingService.deleteSetting('banner_photo_file_id');
+  await ctx.answerCbQuery('✅ Banner photo removed!', { show_alert: true });
+  await ctx.editMessageText('✅ *Store Welcome Banner Photo Removed!*', {
+    parse_mode: 'Markdown',
+    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')]]).reply_markup,
+  });
 });
 
 // 💳 Payment Accounts List
@@ -817,6 +851,54 @@ adminComposer.action('admin_roles', async (ctx) => {
   await ctx.editMessageText(msg, {
     parse_mode: 'Markdown',
     reply_markup: getRolesManagementKeyboard(staffUsers).reply_markup,
+  });
+});
+
+// 📋 View Full Staff List (Owners, Admins, Pending Pre-Authorizations)
+adminComposer.action('admin_roles_list', async (ctx) => {
+  const staffUsers = await UserService.getAllStaffUsers();
+  const preAuthUsers = await UserService.getAllPreAuthorizedStaff();
+
+  let msg = `📋 *Full Staff & Administration List*\n\n`;
+
+  const owners = staffUsers.filter((u) => u.role === 'OWNER');
+  const admins = staffUsers.filter((u) => u.role === 'ADMIN');
+
+  msg += `👑 *OWNERS (${owners.length}):*\n`;
+  if (owners.length === 0) {
+    msg += `_None_\n`;
+  } else {
+    owners.forEach((u, i) => {
+      const userStr = u.username ? `@${u.username}` : (u.firstName || 'User');
+      msg += `${i + 1}. *${userStr}* \`(ID: ${u.telegramId.toString()})\` — Joined ${new Date(u.createdAt).toLocaleDateString()}\n`;
+    });
+  }
+
+  msg += `\n🛡 *ADMINISTRATORS (${admins.length}):*\n`;
+  if (admins.length === 0) {
+    msg += `_None_\n`;
+  } else {
+    admins.forEach((u, i) => {
+      const userStr = u.username ? `@${u.username}` : (u.firstName || 'User');
+      msg += `${i + 1}. *${userStr}* \`(ID: ${u.telegramId.toString()})\` — Joined ${new Date(u.createdAt).toLocaleDateString()}\n`;
+    });
+  }
+
+  if (preAuthUsers.length > 0) {
+    msg += `\n⏳ *PENDING PRE-AUTHORIZATIONS (${preAuthUsers.length}):*\n`;
+    preAuthUsers.forEach((p, i) => {
+      const queryStr = /^\d+$/.test(p.query) ? p.query : `@${p.query}`;
+      msg += `${i + 1}. *${queryStr}* → Role: *${p.role}*\n`;
+    });
+  }
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: Markup.inlineKeyboard([
+      [Markup.button.callback('➕ Add / Change User Role', 'admin_roles_add')],
+      [Markup.button.callback('🛡 Staff Management', 'admin_roles')],
+      [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+    ]).reply_markup,
   });
 });
 
@@ -1019,6 +1101,26 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     } catch (err: any) {
       logger.error('Failed to set bot bio', { error: err.message });
       await ctx.reply(`⚠️ Failed to update bot bio: ${err.message}`);
+    }
+    return;
+  }
+
+  // 🤖 Bot Settings Wizard — Change Store Banner Photo
+  if (state === 'AWAITING_BOT_BANNER_PHOTO') {
+    if (!fileId) {
+      await ctx.reply('⚠️ Please upload an image photo to set as the store banner.');
+      return;
+    }
+    try {
+      await SettingService.setSetting('banner_photo_file_id', fileId);
+      ctx.session!.adminState = undefined;
+      await ctx.reply(`✅ *Store Welcome Banner Photo updated successfully!*`, {
+        parse_mode: 'Markdown',
+        reply_markup: getBotSettingsKeyboard().reply_markup,
+      });
+    } catch (err: any) {
+      logger.error('Failed to set bot banner photo', { error: err.message });
+      await ctx.reply(`⚠️ Failed to update banner photo: ${err.message}`);
     }
     return;
   }

@@ -15,6 +15,7 @@ import { ManualPaymentProvider } from '../payments/providers/manualPaymentProvid
 import { WalletPaymentProvider } from '../payments/providers/walletPaymentProvider.js';
 import { DeliveryService } from '../services/deliveryService.js';
 import { PaymentAccountService } from '../services/paymentAccountService.js';
+import { SettingService } from '../services/settingService.js';
 import { getPaymentReviewKeyboard } from './keyboards/admin.js';
 
 import https from 'https';
@@ -50,6 +51,21 @@ bot.start(async (ctx) => {
     `👋 *Welcome, ${userDisplay}!*${userId}\n\n` +
     `Explore our catalog of digital products, premium accounts, software licenses, and subscription plans.\n\n` +
     `Select an option below to get started:`;
+
+  const bannerPhotoId = await SettingService.getSetting('banner_photo_file_id');
+
+  if (bannerPhotoId) {
+    try {
+      await ctx.replyWithPhoto(bannerPhotoId, {
+        caption: welcomeText,
+        parse_mode: 'Markdown',
+        reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
+      });
+      return;
+    } catch (err) {
+      logger.warn('Failed to send welcome banner photo, falling back to text', { err });
+    }
+  }
 
   await ctx.reply(welcomeText, {
     parse_mode: 'Markdown',
@@ -126,8 +142,23 @@ bot.action('menu_main', async (ctx) => {
     ? `@${ctx.from.username}`
     : (ctx.from?.first_name || `User`);
   const userId = ctx.from?.id ? ` (ID: \`${ctx.from.id}\`)` : '';
+  const text = `🏠 *Main Menu*\n\nWelcome back, *${userDisplay}*!${userId}`;
 
-  await ctx.editMessageText(`🏠 *Main Menu*\n\nWelcome back, *${userDisplay}*!${userId}`, {
+  const bannerPhotoId = await SettingService.getSetting('banner_photo_file_id');
+
+  if (bannerPhotoId) {
+    try {
+      await ctx.editMessageCaption(text, {
+        parse_mode: 'Markdown',
+        reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
+      });
+      return;
+    } catch {
+      // If message wasn't a photo message, edit message text fallback below
+    }
+  }
+
+  await ctx.editMessageText(text, {
     parse_mode: 'Markdown',
     reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
   }).catch((err) => {

@@ -19,6 +19,7 @@ export function getBotSettingsKeyboard() {
     [Markup.button.callback('📛 Change Bot Name', 'admin_change_name')],
     [Markup.button.callback('💬 Change Bio / About', 'admin_change_short_desc')],
     [Markup.button.callback('📝 Change Description', 'admin_change_description')],
+    [Markup.button.callback('🌆 Change Store Banner Photo', 'admin_change_banner')],
     [Markup.button.callback('🖼 Change Profile Photo', 'admin_change_photo')],
     [Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')],
   ]);
@@ -72,6 +73,7 @@ export function getRolesManagementKeyboard(staffUsers: User[]) {
     ]);
   });
 
+  buttons.push([Markup.button.callback('📋 View Full Staff List', 'admin_roles_list')]);
   buttons.push([Markup.button.callback('➕ Add / Change User Role', 'admin_roles_add')]);
   buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
 
