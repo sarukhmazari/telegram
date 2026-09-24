@@ -870,7 +870,7 @@ adminComposer.action('admin_roles_list', async (ctx) => {
   } else {
     owners.forEach((u, i) => {
       const userStr = u.username ? `@${u.username}` : (u.firstName || 'User');
-      msg += `${i + 1}. *${userStr}* \`(ID: ${u.telegramId.toString()})\` — Joined ${new Date(u.createdAt).toLocaleDateString()}\n`;
+      msg += `${i + 1}. \`${userStr}\` \`(ID: ${u.telegramId.toString()})\` — Joined ${new Date(u.createdAt).toLocaleDateString()}\n`;
     });
   }
 
@@ -880,7 +880,7 @@ adminComposer.action('admin_roles_list', async (ctx) => {
   } else {
     admins.forEach((u, i) => {
       const userStr = u.username ? `@${u.username}` : (u.firstName || 'User');
-      msg += `${i + 1}. *${userStr}* \`(ID: ${u.telegramId.toString()})\` — Joined ${new Date(u.createdAt).toLocaleDateString()}\n`;
+      msg += `${i + 1}. \`${userStr}\` \`(ID: ${u.telegramId.toString()})\` — Joined ${new Date(u.createdAt).toLocaleDateString()}\n`;
     });
   }
 
@@ -888,7 +888,7 @@ adminComposer.action('admin_roles_list', async (ctx) => {
     msg += `\n⏳ *PENDING PRE-AUTHORIZATIONS (${preAuthUsers.length}):*\n`;
     preAuthUsers.forEach((p, i) => {
       const queryStr = /^\d+$/.test(p.query) ? p.query : `@${p.query}`;
-      msg += `${i + 1}. *${queryStr}* → Role: *${p.role}*\n`;
+      msg += `${i + 1}. \`${queryStr}\` → Role: *${p.role}*\n`;
     });
   }
 
@@ -915,7 +915,7 @@ adminComposer.action(/^admin_roles_view_(.+)$/, async (ctx) => {
   const userDisplay = user.username ? `@${user.username}` : (user.firstName || user.id);
   const msg =
     `👤 *Staff Member Profile*\n\n` +
-    `• *Name/Handle:* ${userDisplay}\n` +
+    `• *Name/Handle:* \`${userDisplay}\`\n` +
     `• *Telegram ID:* \`${user.telegramId.toString()}\`\n` +
     `• *Current Role:* *${user.role}*\n` +
     `• *Joined:* ${new Date(user.createdAt).toLocaleDateString()}\n\n` +
