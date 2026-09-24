@@ -907,7 +907,8 @@ adminComposer.action(/^admin_preauth_([A-Z]+)_(.+)$/, async (ctx) => {
 
   let rawQuery: string;
   try {
-    rawQuery = Buffer.from(encodedQuery, 'base64').toString('utf8');
+    rawQuery = Buffer.from(encodedQuery, 'hex').toString('utf8');
+    if (!rawQuery) throw new Error('empty');
   } catch {
     await ctx.answerCbQuery('⚠️ Invalid data. Please try again.', { show_alert: true });
     return;
@@ -915,8 +916,8 @@ adminComposer.action(/^admin_preauth_([A-Z]+)_(.+)$/, async (ctx) => {
 
   try {
     const adminId = ctx.dbUser?.id;
-    const preAuth = await UserService.preAuthorizeStaff(rawQuery, targetRole, adminId);
-    const displayQuery = rawQuery.startsWith('\d') ? rawQuery : `@${rawQuery}`;
+    await UserService.preAuthorizeStaff(rawQuery, targetRole, adminId);
+    const displayQuery = /^\d+$/.test(rawQuery) ? rawQuery : `@${rawQuery}`;
 
     await ctx.answerCbQuery(`✅ Pre-authorized as ${targetRole}!`, { show_alert: true });
 

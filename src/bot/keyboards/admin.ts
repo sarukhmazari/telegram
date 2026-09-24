@@ -89,10 +89,11 @@ export function getRoleAssignmentKeyboard(targetUserId: string) {
 
 /**
  * Keyboard shown when the user wasn't in the DB yet — pre-authorize them by @username or ID query.
- * The callback data uses a base64-encoded query to avoid issues with special characters.
+ * Uses hex encoding to keep callback data URL-safe and within Telegram's 64-byte limit.
  */
 export function getPreAuthRoleKeyboard(rawQuery: string) {
-  const encoded = Buffer.from(rawQuery).toString('base64');
+  // Hex-encode to avoid special chars (+, /, =) in callback data
+  const encoded = Buffer.from(rawQuery.slice(0, 20)).toString('hex'); // max 20 chars → 40 hex chars, safely under 64-byte limit
   return Markup.inlineKeyboard([
     [Markup.button.callback('👑 Pre-authorize as Owner', `admin_preauth_OWNER_${encoded}`)],
     [Markup.button.callback('🛡 Pre-authorize as Admin', `admin_preauth_ADMIN_${encoded}`)],
