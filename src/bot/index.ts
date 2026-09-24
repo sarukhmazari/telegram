@@ -113,7 +113,9 @@ bot.command('orders', async (ctx) => {
 });
 
 bot.command('help', async (ctx) => {
-  const helpText = `❓ *Store Help & Support*\n\nUse the menu buttons below to browse products, check your wallet balance, or view past orders.\n\nNeed assistance? Contact support username: @${config.SUPPORT_USERNAME}`;
+  const supportUser = await SettingService.getSupportUsername();
+  const supportStr = supportUser ? `@${supportUser}` : '_(No direct support handle set)_';
+  const helpText = `❓ *Store Help & Support*\n\nUse the menu buttons below to browse products, check your wallet balance, or view past orders.\n\nNeed assistance? Contact support handle: ${supportStr}`;
   await ctx.reply(helpText, {
     parse_mode: 'Markdown',
     reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
@@ -190,12 +192,14 @@ bot.action('menu_balance', async (ctx) => {
 
 // Deposit / Top-up Balance Action
 bot.action('menu_deposit', async (ctx) => {
+  const supportUser = await SettingService.getSupportUsername();
+  const supportStr = supportUser ? `@${supportUser}` : '_(No direct support handle set)_';
   const msg =
     `💳 *Wallet Balance Top-up*\n\n` +
     `To add funds to your wallet balance, please contact store support or send manual payment proof:\n\n` +
-    `• *Support Handle:* @${config.SUPPORT_USERNAME}\n` +
+    `• *Support Handle:* ${supportStr}\n` +
     `• *Accepted Payment Methods:* Binance Pay, USDT TRC20, Bank Transfer, EasyPaisa, JazzCash.\n\n` +
-    `Send your transfer reference or screenshot to @${config.SUPPORT_USERNAME} to credit your account balance instantly.`;
+    `Send your transfer reference or screenshot to support to credit your account balance.`;
 
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('⬅️ Back to Balance', 'menu_balance')],

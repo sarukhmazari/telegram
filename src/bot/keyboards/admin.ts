@@ -18,9 +18,11 @@ export function getBotSettingsKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback('📛 Change Bot Name', 'admin_change_name')],
     [Markup.button.callback('💬 Change Bio / About', 'admin_change_short_desc')],
-    [Markup.button.callback('📝 Change Description', 'admin_change_description')],
-    [Markup.button.callback('🌆 Change Store Banner Photo', 'admin_change_banner')],
-    [Markup.button.callback('🖼 Change Profile Photo', 'admin_change_photo')],
+    [Markup.button.callback('📝 Change Description Text', 'admin_change_description')],
+    [Markup.button.callback('🎧 Change Support Handle', 'admin_change_support')],
+    [Markup.button.callback('🌆 Change In-Chat Store Banner', 'admin_change_banner')],
+    [Markup.button.callback('🖼 Intro / Description Banner Photo', 'admin_change_desc_photo')],
+    [Markup.button.callback('👤 Change Profile Avatar Photo', 'admin_change_photo')],
     [Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')],
   ]);
 }

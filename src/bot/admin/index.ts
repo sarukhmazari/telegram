@@ -556,13 +556,16 @@ adminComposer.action('admin_bot_settings', async (ctx) => {
   const currentDesc = descObj.description
     ? (descObj.description.length > 80 ? descObj.description.substring(0, 80) + '...' : descObj.description)
     : '_(Not set)_';
+  const currentSupport = await SettingService.getSupportUsername();
+  const supportStr = currentSupport ? `@${currentSupport}` : '_(Not set / Disabled)_';
 
   const msg =
     `🤖 *Bot Profile & Settings*\n\n` +
     `• *Name:* ${me.first_name}\n` +
     `• *Username:* @${me.username}\n` +
     `• *Bio / About:* ${currentBio}\n` +
-    `• *Chat Description:* ${currentDesc}\n\n` +
+    `• *Chat Description:* ${currentDesc}\n` +
+    `• *Support Handle:* ${supportStr}\n\n` +
     `Select a setting below to update:`;
 
   await ctx.editMessageText(msg, {
@@ -613,18 +616,78 @@ adminComposer.action('admin_change_short_desc', async (ctx) => {
   );
 });
 
-// 🖼 Change Bot Profile Photo — Info (Telegram API limitation)
+// 🎧 Change Support Handle — Prompt
+adminComposer.action('admin_change_support', async (ctx) => {
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_BOT_SUPPORT_USERNAME';
+
+  const currentSupport = await SettingService.getSupportUsername();
+  const statusStr = currentSupport ? `✅ *Current Support Handle:* @${currentSupport}` : '❌ *No support handle set*';
+
+  const msg =
+    `🎧 *Store Support Handle*\n\n` +
+    `${statusStr}\n\n` +
+    `Reply with the Telegram username for customer support (e.g. \`@zoxer19\` or \`zoxer19\`).\n\n` +
+    `_To remove/delete the support handle, press "Clear Support Handle" below._`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: Markup.inlineKeyboard([
+      [Markup.button.callback('🗑 Clear Support Handle', 'admin_clear_support')],
+      [Markup.button.callback('❌ Cancel', 'admin_bot_settings')],
+    ]).reply_markup,
+  });
+});
+
+// 🗑 Clear Support Handle
+adminComposer.action('admin_clear_support', async (ctx) => {
+  await SettingService.setSetting('support_username', '__NONE__');
+  await ctx.answerCbQuery('✅ Support handle removed!', { show_alert: true });
+  await ctx.editMessageText('✅ *Store Support Handle Removed!*', {
+    parse_mode: 'Markdown',
+    reply_markup: getBotSettingsKeyboard().reply_markup,
+  });
+});
+
+// 👤 Change Bot Profile Photo — Info (Telegram API limitation)
 adminComposer.action('admin_change_photo', async (ctx) => {
+  const me = await ctx.telegram.getMe().catch(() => ({ username: 'your bot' }));
   await ctx.editMessageText(
-    `🖼 *Change Bot Profile Photo*\n\n` +
-    `⚠️ *Telegram does not allow bots to change their own profile photo via the API.*\n\n` +
-    `To update the bot's profile picture, please use *BotFather*:\n\n` +
+    `👤 *Change Bot Profile Avatar Photo*\n\n` +
+    `⚠️ *Telegram platform rules require bot profile avatars to be set via BotFather.*\n\n` +
+    `*Follow these steps to update your avatar:* \n\n` +
     `1️⃣ Open [@BotFather](https://t.me/BotFather)\n` +
-    `2️⃣ Send /setuserpic\n` +
-    `3️⃣ Select your bot and send the new photo`,
+    `2️⃣ Send \`/setuserpic\`\n` +
+    `3️⃣ Select your bot (@${me.username})\n` +
+    `4️⃣ Upload your new profile picture!`,
     {
       parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')]]).reply_markup,
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.url('📲 Open @BotFather in Telegram', 'https://t.me/BotFather')],
+        [Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')],
+      ]).reply_markup,
+    }
+  );
+});
+
+// 🖼 Change Bot Description/Intro Banner Photo — Info & Direct Guide
+adminComposer.action('admin_change_desc_photo', async (ctx) => {
+  const me = await ctx.telegram.getMe().catch(() => ({ username: 'your bot' }));
+  await ctx.editMessageText(
+    `🖼 *Change Bot Intro / Description Banner Photo*\n\n` +
+    `The picture displayed above *"What can this bot do?"* on the initial chat screen is managed directly by Telegram's BotFather.\n\n` +
+    `*Follow these quick steps to update it:* \n\n` +
+    `1️⃣ Open [@BotFather](https://t.me/BotFather)\n` +
+    `2️⃣ Send \`/setdescriptionpic\` (or \`/setdescriptionanimation\` for GIF/video)\n` +
+    `3️⃣ Select your bot (@${me.username})\n` +
+    `4️⃣ Send/upload your new banner photo!\n\n` +
+    `💡 _Note: If you want to change the welcome image sent inside the store menu, use "Change In-Chat Store Banner" in Bot Settings._`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.url('📲 Open @BotFather in Telegram', 'https://t.me/BotFather')],
+        [Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')],
+      ]).reply_markup,
     }
   );
 });
@@ -1101,6 +1164,27 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     } catch (err: any) {
       logger.error('Failed to set bot bio', { error: err.message });
       await ctx.reply(`⚠️ Failed to update bot bio: ${err.message}`);
+    }
+    return;
+  }
+
+  // 🎧 Bot Settings Wizard — Change Support Handle
+  if (state === 'AWAITING_BOT_SUPPORT_USERNAME') {
+    const cleanUsername = text.trim().replace(/^@/, '');
+    if (!cleanUsername || cleanUsername.length < 3) {
+      await ctx.reply('⚠️ Please send a valid Telegram username (e.g. `@zoxer19`).');
+      return;
+    }
+    try {
+      await SettingService.setSetting('support_username', cleanUsername);
+      ctx.session!.adminState = undefined;
+      await ctx.reply(`✅ *Support handle updated to:* @${cleanUsername}`, {
+        parse_mode: 'Markdown',
+        reply_markup: getBotSettingsKeyboard().reply_markup,
+      });
+    } catch (err: any) {
+      logger.error('Failed to set support handle', { error: err.message });
+      await ctx.reply(`⚠️ Failed to update support handle: ${err.message}`);
     }
     return;
   }
