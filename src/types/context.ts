@@ -9,6 +9,7 @@ export interface SessionData {
   userData?: Record<string, any>;
   cartVariantId?: string;
   cartQuantity?: number;
+  activeOrderId?: string;
 }
 
 export interface BotContext extends Context {

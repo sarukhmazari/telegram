@@ -478,6 +478,7 @@ bot.action('buy_zero_item', async (ctx) => {
 
 // 🛒 Buy Variant Click — Create Order & Show Payment Selection
 bot.action(/^buy_var_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const variantId = ctx.match[1];
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;
@@ -485,7 +486,7 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
   // Check stock first
   const stockCount = await ProductService.getAvailableStockCount(variantId);
   if (stockCount === 0) {
-    await ctx.answerCbQuery('⚠️ Selected item is currently out of stock.', { show_alert: true });
+    await ctx.answerCbQuery('⚠️ Selected item is currently out of stock.', { show_alert: true }).catch(() => {});
     return;
   }
 
@@ -496,8 +497,12 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
     quantity: 1,
   });
 
+  if (!ctx.session) ctx.session = {};
+  ctx.session.activeOrderId = order.id;
+
   const orderItem = (order as any).items?.[0];
-  const productName = orderItem?.variant?.product?.name || 'Digital Item';
+  const rawProductName = orderItem?.variant?.product?.name || 'Digital Item';
+  const productName = rawProductName.replace(/[_*`\[\]]/g, '\\$&');
   const totalAmount = Number(order.totalAmount).toFixed(2);
   const userBalance = Number(user.balance).toFixed(2);
 
@@ -516,7 +521,7 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
     paymentButtons.push([
       Markup.button.callback(
         `📱 Pay with ${acc.providerName} (${acc.accountNumber})`,
-        `pay_method_acc_${acc.id}_${order.id}`
+        `pay_acc_${acc.id}`
       ),
     ]);
   });
@@ -543,13 +548,66 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
 });
 
 // 📱 Pay via Dynamic Payment Account — Show Payment Instructions
+bot.action(/^pay_acc_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const accountId = ctx.match[1];
+  const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
+  if (!user) return;
+
+  const orderId = ctx.session?.activeOrderId;
+  const order = (orderId ? await OrderService.getOrderById(orderId) : null) || (await OrderService.getLatestPendingOrder(user.id));
+  if (!order) {
+    await ctx.answerCbQuery('Order not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const account = await PaymentAccountService.getAccountById(accountId);
+  const providerName = account?.providerName || 'Manual Transfer';
+  const accountNumber = account?.accountNumber || '03292823218';
+  const accountTitle = account?.accountTitle || 'SARIKH MUREED';
+  const instructions =
+    account?.instructions ||
+    `After completing the transfer, please *reply directly to this chat with your 12-digit Transaction ID (TRX ID)* or send a screenshot of the payment receipt.`;
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.userState = 'AWAITING_PAYMENT_PROOF';
+  ctx.session.userData = {
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    amount: Number(order.totalAmount).toFixed(2),
+    providerName,
+    accountNumber,
+    accountTitle,
+  };
+
+  const msg =
+    `💳 *${providerName} Payment Instructions*\n\n` +
+    `Please transfer the total amount to our ${providerName} account:\n\n` +
+    `• *Payment Method:* ${providerName}\n` +
+    `• *Account Number / IBAN:* \`${accountNumber}\`\n` +
+    `• *Account Title:* \`${accountTitle}\`\n` +
+    `• *Amount to Transfer:* *Rs. ${Number(order.totalAmount).toFixed(2)} PKR*\n` +
+    `• *Order Number:* \`#${order.orderNumber}\`\n\n` +
+    `📌 *Instructions:*\n` +
+    `${instructions}`;
+
+  const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'menu_main')]]);
+
+  await ctx.editMessageText(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: keyboard.reply_markup,
+  });
+});
+
+// Legacy handler support
 bot.action(/^pay_method_acc_(.+)_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const accountId = ctx.match[1];
   const orderId = ctx.match[2];
 
   const order = await OrderService.getOrderById(orderId);
   if (!order) {
-    await ctx.answerCbQuery('Order not found.');
+    await ctx.answerCbQuery('Order not found.', { show_alert: true }).catch(() => {});
     return;
   }
 

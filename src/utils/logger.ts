@@ -15,6 +15,7 @@ const SENSITIVE_KEYS = [
 
 function sanitizeObject(obj: any): any {
   if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'bigint') return obj.toString();
   if (typeof obj !== 'object') return obj;
 
   if (Array.isArray(obj)) {

@@ -126,6 +126,23 @@ export class OrderService {
     });
   }
 
+  static async getLatestPendingOrder(userId: string) {
+    return prisma.order.findFirst({
+      where: {
+        userId,
+        paymentStatus: PaymentStatus.PENDING,
+        orderStatus: OrderStatus.PENDING,
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: true,
+        items: { include: { variant: { include: { product: true } } } },
+        payments: true,
+        stockItems: true,
+      },
+    });
+  }
+
   static async getUserOrders(userId: string, limit: number = 10) {
     return prisma.order.findMany({
       where: { userId },
