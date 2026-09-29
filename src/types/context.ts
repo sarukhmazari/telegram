@@ -3,6 +3,7 @@ import { User, Role } from '@prisma/client';
 
 export interface SessionData {
   adminState?: string;
+  pendingVariantId?: string;
   adminData?: Record<string, any>;
   pendingStockLines?: string[];
   userState?: string;

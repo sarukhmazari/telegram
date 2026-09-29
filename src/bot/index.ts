@@ -490,11 +490,43 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
     return;
   }
 
-  // Create order
+  // Prompt user for quantity selection
+  if (!ctx.session) ctx.session = {};
+  ctx.session.pendingVariantId = variantId;
+
+  // Build quantity keyboard (1-5)
+  const qtyButtons = [1, 2, 3, 4, 5].map((q) =>
+    Markup.button.callback(`${q}`, `select_qty_${variantId}_${q}`)
+  );
+  const quantityKeyboard = Markup.inlineKeyboard(
+    qtyButtons.map((b) => [b]).concat([[Markup.button.callback('⬅️ Cancel', 'menu_store')]])
+  );
+
+  await ctx.reply(`🛒 *Select Quantity*\n\nAvailable: ${stockCount} items.`, {
+    parse_mode: 'Markdown',
+    reply_markup: quantityKeyboard.reply_markup,
+  });
+});
+
+// Quantity selection — Create Order with chosen quantity
+bot.action(/^select_qty_(.+)_(\d+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const matchedVariantId = ctx.match[1];
+const quantity = Number(ctx.match[2]);
+const variantId = ctx.session?.pendingVariantId || matchedVariantId;
+  const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
+  if (!user) return;
+
+  const stockCount = await ProductService.getAvailableStockCount(variantId);
+  if (quantity > stockCount) {
+    await ctx.answerCbQuery('⚠️ Selected quantity exceeds available stock.', { show_alert: true });
+    return;
+  }
+
   const order = await OrderService.createOrder({
     userId: user.id,
     variantId,
-    quantity: 1,
+    quantity,
   });
 
   if (!ctx.session) ctx.session = {};
@@ -506,36 +538,28 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
   const totalAmount = Number(order.totalAmount).toFixed(2);
   const userBalance = Number(user.balance).toFixed(2);
 
-  const msg =
-    `🛒 *Order Checkout Confirmation*\n\n` +
+  const msg = `🛒 *Order Checkout Confirmation*\n\n` +
     `📋 *Order Number:* \`#${order.orderNumber}\` \n` +
     `📦 *Product:* ${productName}\n` +
-    `🔢 *Quantity:* 1\n` +
+    `🔢 *Quantity:* ${quantity}\n` +
     `💰 *Total Amount:* *Rs. ${totalAmount} PKR*\n\n` +
     `💳 *Select your payment method below:*`;
 
   const accounts = await PaymentAccountService.getActiveAccounts();
   const paymentButtons: any[] = [];
-
   accounts.forEach((acc) => {
     paymentButtons.push([
-      Markup.button.callback(
-        `📱 Pay with ${acc.providerName} (${acc.accountNumber})`,
-        `pay_acc_${acc.id}`
-      ),
+      Markup.button.callback(`📱 Pay with ${acc.providerName} (${acc.accountNumber})`, `pay_acc_${acc.id}`),
     ]);
   });
-
   if (paymentButtons.length === 0) {
     paymentButtons.push([
       Markup.button.callback('📱 Pay with JazzCash (03292823218)', `pay_method_jazzcash_${order.id}`),
     ]);
   }
-
   paymentButtons.push([
     Markup.button.callback(`💰 Pay with Wallet Balance (Rs. ${userBalance})`, `pay_method_wallet_${order.id}`),
   ]);
-
   paymentButtons.push([
     Markup.button.callback('⬅️ Cancel Order', 'menu_store'),
     Markup.button.callback('🏠 Home', 'menu_main'),
