@@ -11,6 +11,8 @@ if (typeof (BigInt.prototype as any).toJSON !== 'function') {
   };
 }
 
+let isServerlessInitialized = false;
+
 export default async function handler(
   req: IncomingMessage & { body?: any; query?: any; method?: string },
   res: ServerResponse & { status?: (code: number) => any; json?: (data: any) => any; send?: (data: any) => any }
@@ -65,20 +67,21 @@ export default async function handler(
 
   if (req.method === 'POST') {
     try {
-      // 1. Connect database safely and seed default payment accounts if first run
-      await connectDatabase().catch((dbErr) => {
-        console.error('Database connection error in serverless handler:', dbErr);
-        throw dbErr;
-      });
-      await PaymentAccountService.seedDefaultIfEmpty().catch(() => {});
-
-      // 2. Ensure botInfo is populated for Telegraf command routing in serverless
-      if (!bot.botInfo) {
-        try {
-          bot.botInfo = await bot.telegram.getMe();
-        } catch (meErr: any) {
-          console.warn('Unable to pre-fetch bot.botInfo on cold start:', meErr?.message);
+      // 1. One-time cold-start initialization
+      if (!isServerlessInitialized) {
+        await connectDatabase().catch((dbErr) => {
+          console.error('Database connection error in serverless handler:', dbErr);
+          throw dbErr;
+        });
+        await PaymentAccountService.seedDefaultIfEmpty().catch(() => {});
+        if (!bot.botInfo) {
+          try {
+            bot.botInfo = await bot.telegram.getMe();
+          } catch (meErr: any) {
+            console.warn('Unable to pre-fetch bot.botInfo on cold start:', meErr?.message);
+          }
         }
+        isServerlessInitialized = true;
       }
 
       // 3. Extract request body reliably (handles object, string, or raw stream)

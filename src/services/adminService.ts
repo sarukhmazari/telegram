@@ -24,6 +24,14 @@ export interface BulkImportResult {
   invalidCount: number;
 }
 
+export interface PaymentActionResult {
+  success: boolean;
+  error?: string;
+  orderNumber?: string;
+  amount?: string;
+  customer?: string;
+}
+
 export class AdminService {
   static async getDashboardMetrics(): Promise<DashboardMetrics> {
     const startOfToday = new Date();
@@ -121,39 +129,130 @@ export class AdminService {
     return { importedCount, duplicateCount, invalidCount };
   }
 
-  static async approvePayment(paymentId: string, adminNotes?: string, bot?: Telegraf<BotContext>): Promise<boolean> {
-    const provider = new ManualPaymentProvider();
-    const result = await provider.verifyPayment(paymentId, { approve: true, adminNotes });
-
-    if (result.isVerified) {
+  static async approvePayment(
+    paymentId: string,
+    adminNotes?: string,
+    botInstance?: any
+  ): Promise<PaymentActionResult> {
+    try {
       const payment = await prisma.payment.findUnique({
         where: { id: paymentId },
-        include: { order: true },
+        include: {
+          order: {
+            include: {
+              items: {
+                include: { variant: { include: { product: true } } },
+              },
+            },
+          },
+          user: true,
+        },
       });
 
-      if (payment) {
-        // Trigger order delivery upon approval
-        await DeliveryService.processOrderDelivery(payment.orderId, bot);
+      if (!payment) {
+        return { success: false, error: 'Payment record not found.' };
       }
-      return true;
+
+      const customerDisplay = payment.user.username
+        ? `@${payment.user.username}`
+        : (payment.user.firstName || payment.user.id);
+      const amountStr = Number(payment.amount).toFixed(2);
+      const orderNum = payment.order.orderNumber;
+
+      if (payment.status === PaymentStatus.PAID && payment.order.deliveryStatus === DeliveryStatus.DELIVERED) {
+        return {
+          success: true,
+          orderNumber: orderNum,
+          amount: amountStr,
+          customer: customerDisplay,
+        };
+      }
+
+      const provider = new ManualPaymentProvider();
+      const result = await provider.verifyPayment(paymentId, { approve: true, adminNotes });
+
+      if (!result.isVerified) {
+        return { success: false, error: 'Verification failed in payment provider.' };
+      }
+
+      try {
+        await DeliveryService.processOrderDelivery(payment.orderId, botInstance);
+      } catch (delivErr: any) {
+        logger.error('Automatic delivery failed during payment approval', {
+          paymentId,
+          error: delivErr.message,
+        });
+        return {
+          success: false,
+          error: delivErr.message || 'Delivery failed. Please ensure stock is available.',
+          orderNumber: orderNum,
+          amount: amountStr,
+          customer: customerDisplay,
+        };
+      }
+
+      return {
+        success: true,
+        orderNumber: orderNum,
+        amount: amountStr,
+        customer: customerDisplay,
+      };
+    } catch (err: any) {
+      logger.error('Error during approvePayment', { paymentId, error: err.message });
+      return { success: false, error: err.message || 'Approval execution failed.' };
     }
-    return false;
   }
 
-  static async rejectPayment(paymentId: string, adminNotes?: string, bot?: Telegraf<BotContext>): Promise<boolean> {
-    const provider = new ManualPaymentProvider();
-    await provider.verifyPayment(paymentId, { approve: false, adminNotes });
+  static async rejectPayment(
+    paymentId: string,
+    adminNotes?: string,
+    botInstance?: any
+  ): Promise<PaymentActionResult> {
+    try {
+      const payment = await prisma.payment.findUnique({
+        where: { id: paymentId },
+        include: { user: true, order: true },
+      });
 
-    const payment = await prisma.payment.findUnique({
-      where: { id: paymentId },
-      include: { user: true, order: true },
-    });
+      if (!payment) {
+        return { success: false, error: 'Payment record not found.' };
+      }
 
-    if (payment && bot) {
-      const msg = `❌ *Payment Verification Failed*\n\nOrder #${payment.order.orderNumber}\nAmount: Rs. ${Number(payment.amount).toFixed(2)}\n\nReason: ${adminNotes || 'Verification rejected by store admin.'}`;
-      await bot.telegram.sendMessage(payment.user.telegramId.toString(), msg, { parse_mode: 'Markdown' }).catch(() => {});
+      const customerDisplay = payment.user.username
+        ? `@${payment.user.username}`
+        : (payment.user.firstName || payment.user.id);
+      const amountStr = Number(payment.amount).toFixed(2);
+      const orderNum = payment.order.orderNumber;
+
+      const provider = new ManualPaymentProvider();
+      await provider.verifyPayment(paymentId, { approve: false, adminNotes });
+
+      if (botInstance) {
+        const telegramApi = botInstance.telegram || (typeof botInstance.sendMessage === 'function' ? botInstance : null);
+        if (telegramApi) {
+          const msg =
+            `❌ *Payment Verification Update*\n\n` +
+            `• *Order Number:* \`#${orderNum}\`\n` +
+            `• *Amount:* Rs. ${amountStr} ${payment.currency}\n` +
+            `• *Status:* ❌ *Payment Rejected / Declined*\n` +
+            `• *Reason:* ${adminNotes || 'Verification rejected by store admin.'}\n\n` +
+            `If you believe this is a mistake, please contact support (@zoxer19).`;
+
+          await telegramApi.sendMessage(payment.user.telegramId.toString(), msg, {
+            parse_mode: 'Markdown',
+          }).catch(() => {});
+        }
+      }
+
+      return {
+        success: true,
+        orderNumber: orderNum,
+        amount: amountStr,
+        customer: customerDisplay,
+      };
+    } catch (err: any) {
+      logger.error('Error during rejectPayment', { paymentId, error: err.message });
+      return { success: false, error: err.message || 'Rejection execution failed.' };
     }
-
-    return true;
   }
 }

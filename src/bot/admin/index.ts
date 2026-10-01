@@ -170,38 +170,89 @@ adminComposer.action('admin_payments', async (ctx) => {
   });
 });
 
+// Helper to safely edit admin messages (supports photo captions and text messages)
+async function safeEditAdminMessage(ctx: BotContext, text: string, replyMarkup?: any) {
+  const markup = replyMarkup?.reply_markup || replyMarkup;
+  try {
+    if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
+      await ctx.editMessageCaption(text, {
+        parse_mode: 'Markdown',
+        reply_markup: markup,
+      });
+    } else {
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: markup,
+      });
+    }
+  } catch (err: any) {
+    if (!String(err).includes('message is not modified')) {
+      try {
+        const plainText = text.replace(/[*_`\[\]]/g, '');
+        if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
+          await ctx.editMessageCaption(plainText, { reply_markup: markup });
+        } else {
+          await ctx.editMessageText(plainText, { reply_markup: markup });
+        }
+      } catch {
+        await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: markup }).catch(() => {});
+      }
+    }
+  }
+}
+
 // ✅ Approve Payment
 adminComposer.action(/^admin_approve_pay_(.+)$/, async (ctx) => {
   const paymentId = ctx.match[1];
   
-  await ctx.answerCbQuery('✅ Processing approval...').catch(() => {});
+  // Instant tactile feedback to Telegram app (stops spinner immediately in < 1ms)
+  await ctx.answerCbQuery().catch(() => {});
+
+  // Immediately remove action buttons and show in-progress status to avoid duplicate clicks
+  await safeEditAdminMessage(
+    ctx,
+    '⏳ *Processing Payment Approval & Digital Delivery...*\n\nPlease wait a moment.'
+  );
 
   try {
-    const success = await AdminService.approvePayment(paymentId, 'Approved by Admin', ctx as any);
+    const result = await AdminService.approvePayment(paymentId, 'Approved by Admin', ctx as any);
 
-    if (success) {
-      await ctx.answerCbQuery('✅ Payment approved & digital delivery dispatched!', { show_alert: true }).catch(() => {});
-      
-      const successText = '✅ *Payment Approved & Digital Delivery Dispatched!*';
-      const keyboard = Markup.inlineKeyboard([[Markup.button.callback('⚙️ Admin Panel', 'admin_main')]]);
+    if (result.success) {
+      const successText =
+        `✅ *Payment Approved & Digital Delivery Dispatched!*\n\n` +
+        `• *Order Number:* \`#${result.orderNumber || ''}\`\n` +
+        `• *Customer:* ${result.customer || 'Customer'}\n` +
+        `• *Amount:* Rs. ${result.amount || ''} PKR\n` +
+        `• *Status:* Digital credentials delivered directly to customer chat.`;
 
-      if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
-        await ctx.editMessageCaption(successText, {
-          parse_mode: 'Markdown',
-          reply_markup: keyboard.reply_markup,
-        }).catch(() => {});
-      } else {
-        await ctx.editMessageText(successText, {
-          parse_mode: 'Markdown',
-          reply_markup: keyboard.reply_markup,
-        }).catch(() => {});
-      }
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+      ]);
+
+      await safeEditAdminMessage(ctx, successText, keyboard);
     } else {
-      await ctx.answerCbQuery('⚠️ Could not approve payment (out of stock or already processed).', { show_alert: true }).catch(() => {});
+      const errorText =
+        `⚠️ *Payment Approval Error*\n\n` +
+        `• *Order Number:* \`#${result.orderNumber || ''}\`\n` +
+        `• *Issue:* ${result.error || 'Could not verify payment'}\n\n` +
+        `_If out of stock, please add stock to this product first, then re-approve._`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Retry Approval', `admin_approve_pay_${paymentId}`)],
+        [Markup.button.callback('📦 Stock Management', 'admin_stock')],
+        [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+      ]);
+
+      await safeEditAdminMessage(ctx, errorText, keyboard);
     }
   } catch (err: any) {
     logger.error('Error in approvePayment handler', { error: err.message });
-    await ctx.answerCbQuery(`⚠️ Error: ${err.message || 'Approval failed'}`, { show_alert: true }).catch(() => {});
+    const failText = `⚠️ *Approval Error:* ${err.message || 'An unexpected error occurred.'}`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔄 Retry Approval', `admin_approve_pay_${paymentId}`)],
+      [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+    ]);
+    await safeEditAdminMessage(ctx, failText, keyboard);
   }
 });
 
@@ -209,28 +260,45 @@ adminComposer.action(/^admin_approve_pay_(.+)$/, async (ctx) => {
 adminComposer.action(/^admin_reject_pay_(.+)$/, async (ctx) => {
   const paymentId = ctx.match[1];
   
-  await ctx.answerCbQuery('❌ Rejecting payment...').catch(() => {});
+  // Instant tactile feedback to Telegram app (stops spinner immediately in < 1ms)
+  await ctx.answerCbQuery().catch(() => {});
+
+  // Immediately remove action buttons and show in-progress status to avoid duplicate clicks
+  await safeEditAdminMessage(
+    ctx,
+    '⏳ *Rejecting Payment & Notifying Customer...*\n\nPlease wait a moment.'
+  );
 
   try {
-    await AdminService.rejectPayment(paymentId, 'Rejected by Admin', ctx as any);
-    await ctx.answerCbQuery('❌ Payment rejected & customer notified.', { show_alert: true }).catch(() => {});
+    const result = await AdminService.rejectPayment(paymentId, 'Rejected by Admin', ctx as any);
 
-    const rejectedText = '❌ *Payment Rejected & Customer Notified.*';
-    const keyboard = Markup.inlineKeyboard([[Markup.button.callback('⚙️ Admin Panel', 'admin_main')]]);
+    if (result.success) {
+      const rejectedText =
+        `❌ *Payment Rejected & Customer Notified*\n\n` +
+        `• *Order Number:* \`#${result.orderNumber || ''}\`\n` +
+        `• *Customer:* ${result.customer || 'Customer'}\n` +
+        `• *Amount:* Rs. ${result.amount || ''} PKR\n` +
+        `• *Status:* Payment declined. Notification sent to customer.`;
 
-    if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
-      await ctx.editMessageCaption(rejectedText, {
-        parse_mode: 'Markdown',
-        reply_markup: keyboard.reply_markup,
-      }).catch(() => {});
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+      ]);
+
+      await safeEditAdminMessage(ctx, rejectedText, keyboard);
     } else {
-      await ctx.editMessageText(rejectedText, {
-        parse_mode: 'Markdown',
-        reply_markup: keyboard.reply_markup,
-      }).catch(() => {});
+      const errorText = `⚠️ *Rejection Issue:* ${result.error || 'Could not reject payment.'}`;
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+      ]);
+      await safeEditAdminMessage(ctx, errorText, keyboard);
     }
   } catch (err: any) {
     logger.error('Error in rejectPayment handler', { error: err.message });
+    const failText = `⚠️ *Rejection Error:* ${err.message || 'An unexpected error occurred.'}`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+    ]);
+    await safeEditAdminMessage(ctx, failText, keyboard);
   }
 });
 

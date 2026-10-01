@@ -2,19 +2,34 @@ import { prisma } from '../database/index.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
 
+interface CachedSetting {
+  value: string | null;
+  cachedAt: number;
+}
+
+const settingCache = new Map<string, CachedSetting>();
+const SETTING_CACHE_TTL_MS = 60 * 1000; // 60 seconds TTL
+
 export class SettingService {
   /**
-   * Retrieve a setting by key
+   * Retrieve a setting by key (cached for speed)
    */
   static async getSetting(key: string): Promise<string | null> {
+    const cached = settingCache.get(key);
+    if (cached && Date.now() - cached.cachedAt < SETTING_CACHE_TTL_MS) {
+      return cached.value;
+    }
+
     try {
       const setting = await prisma.setting.findUnique({
         where: { key },
       });
-      return setting ? setting.value : null;
+      const val = setting ? setting.value : null;
+      settingCache.set(key, { value: val, cachedAt: Date.now() });
+      return val;
     } catch (err: any) {
       logger.error('Failed to fetch setting', { key, error: err.message });
-      return null;
+      return cached ? cached.value : null;
     }
   }
 
@@ -22,6 +37,7 @@ export class SettingService {
    * Upsert a setting key-value pair
    */
   static async setSetting(key: string, value: string): Promise<void> {
+    settingCache.set(key, { value, cachedAt: Date.now() });
     await prisma.setting.upsert({
       where: { key },
       update: { value, updatedAt: new Date() },
@@ -44,7 +60,9 @@ export class SettingService {
    * Delete a setting
    */
   static async deleteSetting(key: string): Promise<void> {
+    settingCache.delete(key);
     await prisma.setting.delete({ where: { key } }).catch(() => {});
     logger.info('Setting deleted', { key });
   }
 }
+

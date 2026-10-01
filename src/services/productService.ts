@@ -2,11 +2,29 @@ import { prisma } from '../database/index.js';
 import { Category, Product, ProductStatus, ProductVariant, DeliveryType } from '@prisma/client';
 import { logger } from '../utils/logger.js';
 
+let cachedActiveCategories: (Category & { _count: { products: number } })[] | null = null;
+let cachedActiveCategoriesTime = 0;
+let cachedAllCategories: Category[] | null = null;
+let cachedAllCategoriesTime = 0;
+const CATEGORY_CACHE_TTL_MS = 30 * 1000; // 30 seconds
+
 export class ProductService {
+  static invalidateCategoryCache() {
+    cachedActiveCategories = null;
+    cachedActiveCategoriesTime = 0;
+    cachedAllCategories = null;
+    cachedAllCategoriesTime = 0;
+  }
+
   // --- Category Operations ---
 
   static async getActiveCategories(): Promise<(Category & { _count: { products: number } })[]> {
-    return prisma.category.findMany({
+    const now = Date.now();
+    if (cachedActiveCategories && now - cachedActiveCategoriesTime < CATEGORY_CACHE_TTL_MS) {
+      return cachedActiveCategories;
+    }
+
+    const categories = await prisma.category.findMany({
       where: { isEnabled: true },
       orderBy: { position: 'asc' },
       include: {
@@ -15,12 +33,25 @@ export class ProductService {
         },
       },
     });
+
+    cachedActiveCategories = categories;
+    cachedActiveCategoriesTime = now;
+    return categories;
   }
 
   static async getAllCategories(): Promise<Category[]> {
-    return prisma.category.findMany({
+    const now = Date.now();
+    if (cachedAllCategories && now - cachedAllCategoriesTime < CATEGORY_CACHE_TTL_MS) {
+      return cachedAllCategories;
+    }
+
+    const categories = await prisma.category.findMany({
       orderBy: { position: 'asc' },
     });
+
+    cachedAllCategories = categories;
+    cachedAllCategoriesTime = now;
+    return categories;
   }
 
   static async getCategoryById(id: string): Promise<Category | null> {
@@ -30,6 +61,7 @@ export class ProductService {
   }
 
   static async createCategory(name: string, description?: string, position: number = 0): Promise<Category> {
+    ProductService.invalidateCategoryCache();
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
     return prisma.category.create({
       data: {
@@ -99,6 +131,7 @@ export class ProductService {
     imageUrl?: string,
     isFeatured: boolean = false
   ): Promise<Product> {
+    ProductService.invalidateCategoryCache();
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
     return prisma.product.create({
       data: {
@@ -146,3 +179,4 @@ export class ProductService {
     });
   }
 }
+

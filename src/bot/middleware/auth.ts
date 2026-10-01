@@ -40,7 +40,11 @@ export const authMiddleware: MiddlewareFn<BotContext> = async (ctx, next) => {
     return next();
   } catch (error) {
     console.error('Auth middleware error:', error);
-    await ctx.reply('⚠️ Service temporarily unavailable. Please try again later.');
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery('⚠️ Temporary error, please retry.', { show_alert: true }).catch(() => {});
+    } else {
+      await ctx.reply('⚠️ Service temporarily unavailable. Please try again later.').catch(() => {});
+    }
   }
 };
 

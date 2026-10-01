@@ -124,9 +124,10 @@ bot.command('help', async (ctx) => {
 
 // /shop or Store button
 bot.action('menu_store', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const categories = await ProductService.getActiveCategories();
   if (categories.length === 0) {
-    await ctx.answerCbQuery('No active categories available at the moment.').catch(() => {});
+    await ctx.reply('No active categories available at the moment.', getMainMenuKeyboard(ctx.isAdmin));
     return;
   }
 
@@ -140,6 +141,7 @@ bot.action('menu_store', async (ctx) => {
 
 // Main menu callback
 bot.action('menu_main', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const userDisplay = ctx.from?.username
     ? `@${ctx.from.username}`
     : (ctx.from?.first_name || `User`);
@@ -170,6 +172,7 @@ bot.action('menu_main', async (ctx) => {
 
 // Balance Menu
 bot.action('menu_balance', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   const balance = Number(user?.balance || 0).toFixed(2);
   const msg =
@@ -192,6 +195,7 @@ bot.action('menu_balance', async (ctx) => {
 
 // Deposit / Top-up Balance Action
 bot.action('menu_deposit', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const supportUser = await SettingService.getSupportUsername();
   const supportStr = supportUser ? `@${supportUser}` : '_(No direct support handle set)_';
   const msg =
@@ -216,6 +220,7 @@ bot.action('menu_deposit', async (ctx) => {
 
 // Account Menu
 bot.action('menu_account', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;
 
@@ -238,6 +243,7 @@ bot.action('menu_account', async (ctx) => {
 
 // My Orders Menu
 bot.action('menu_orders', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;
 
@@ -271,10 +277,10 @@ bot.action('menu_orders', async (ctx) => {
 
 // View Order Details & Purchased Credentials
 bot.action(/^view_order_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const orderId = ctx.match[1];
   const order = await OrderService.getOrderById(orderId);
   if (!order) {
-    await ctx.answerCbQuery('Order not found.');
     return;
   }
 
@@ -318,6 +324,7 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
 
 // Promotions Menu
 bot.action('menu_promotions', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const msg = `🎁 *Active Store Promotions*\n\nNo active promotions available at the moment. Check back soon for discounts!`;
   await ctx.editMessageText(msg, {
     parse_mode: 'Markdown',
@@ -329,6 +336,7 @@ bot.action('menu_promotions', async (ctx) => {
 
 // Support Menu
 bot.action('menu_support', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const helpText =
     `❓ *Store Help & Support*\n\n` +
     `Need assistance with an order, wallet balance, or product inquiry?\n\n` +
@@ -350,10 +358,10 @@ bot.action('menu_support', async (ctx) => {
 
 // Category Click — Show Product Details with Live Price & Live Stock Count
 bot.action(/^cat_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const categoryId = ctx.match[1];
   const category = await ProductService.getCategoryById(categoryId);
   if (!category) {
-    await ctx.answerCbQuery('Category not found.');
     return;
   }
 
@@ -426,10 +434,10 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
 
 // Product Click — Show Details
 bot.action(/^prod_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const productId = ctx.match[1];
   const product = await ProductService.getProductById(productId);
   if (!product) {
-    await ctx.answerCbQuery('Product not found.');
     return;
   }
 

@@ -2,24 +2,55 @@ import { prisma } from '../database/index.js';
 import { logger } from '../utils/logger.js';
 import { PaymentAccount } from '@prisma/client';
 
+let cachedActiveAccounts: PaymentAccount[] | null = null;
+let cachedActiveAccountsTime = 0;
+let cachedAllAccounts: PaymentAccount[] | null = null;
+let cachedAllAccountsTime = 0;
+const ACCOUNT_CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
 export class PaymentAccountService {
+  static invalidateCache() {
+    cachedActiveAccounts = null;
+    cachedActiveAccountsTime = 0;
+    cachedAllAccounts = null;
+    cachedAllAccountsTime = 0;
+  }
+
   /**
    * Return all payment accounts ordered by position / creation
    */
   static async getAllAccounts(): Promise<PaymentAccount[]> {
-    return prisma.paymentAccount.findMany({
+    const now = Date.now();
+    if (cachedAllAccounts && now - cachedAllAccountsTime < ACCOUNT_CACHE_TTL_MS) {
+      return cachedAllAccounts;
+    }
+
+    const accounts = await prisma.paymentAccount.findMany({
       orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
     });
+
+    cachedAllAccounts = accounts;
+    cachedAllAccountsTime = now;
+    return accounts;
   }
 
   /**
    * Return enabled payment accounts for customer checkout
    */
   static async getActiveAccounts(): Promise<PaymentAccount[]> {
-    return prisma.paymentAccount.findMany({
+    const now = Date.now();
+    if (cachedActiveAccounts && now - cachedActiveAccountsTime < ACCOUNT_CACHE_TTL_MS) {
+      return cachedActiveAccounts;
+    }
+
+    const accounts = await prisma.paymentAccount.findMany({
       where: { isEnabled: true },
       orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
     });
+
+    cachedActiveAccounts = accounts;
+    cachedActiveAccountsTime = now;
+    return accounts;
   }
 
   /**
@@ -40,6 +71,7 @@ export class PaymentAccountService {
     accountTitle: string;
     instructions?: string;
   }): Promise<PaymentAccount> {
+    PaymentAccountService.invalidateCache();
     const count = await prisma.paymentAccount.count();
     const created = await prisma.paymentAccount.create({
       data: {
@@ -69,6 +101,7 @@ export class PaymentAccountService {
       isEnabled: boolean;
     }>
   ): Promise<PaymentAccount> {
+    PaymentAccountService.invalidateCache();
     const updated = await prisma.paymentAccount.update({
       where: { id },
       data,
@@ -81,6 +114,7 @@ export class PaymentAccountService {
    * Toggle enabled / disabled status
    */
   static async toggleAccount(id: string): Promise<PaymentAccount> {
+    PaymentAccountService.invalidateCache();
     const current = await this.getAccountById(id);
     if (!current) throw new Error('Payment account not found');
 
@@ -91,6 +125,7 @@ export class PaymentAccountService {
    * Delete a payment account
    */
   static async deleteAccount(id: string): Promise<PaymentAccount> {
+    PaymentAccountService.invalidateCache();
     const deleted = await prisma.paymentAccount.delete({
       where: { id },
     });
@@ -116,6 +151,7 @@ export class PaymentAccountService {
             position: 0,
           },
         });
+        PaymentAccountService.invalidateCache();
         logger.info('✅ Initial default JazzCash payment account seeded.');
       }
     } catch (err: any) {

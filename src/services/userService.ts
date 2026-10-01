@@ -4,9 +4,41 @@ import { logger } from '../utils/logger.js';
 import { Role, TransactionType, User, PreAuthorizedStaff } from '@prisma/client';
 import crypto from 'crypto';
 
+interface CachedUser {
+  user: User;
+  cachedAt: number;
+}
+
+// In-memory cache for sub-millisecond user authentication
+const userCache = new Map<string, CachedUser>();
+const USER_CACHE_TTL_MS = 60 * 1000; // 60 seconds TTL
+
 export class UserService {
   /**
+   * Helper to set user in cache
+   */
+  static setCachedUser(user: User) {
+    userCache.set(user.telegramId.toString(), {
+      user,
+      cachedAt: Date.now(),
+    });
+    userCache.set(user.id, {
+      user,
+      cachedAt: Date.now(),
+    });
+  }
+
+  /**
+   * Helper to invalidate cache
+   */
+  static invalidateCache(telegramIdOrId: string | bigint | number) {
+    const key = telegramIdOrId.toString();
+    userCache.delete(key);
+  }
+
+  /**
    * Find existing user or auto-register a new Telegram user.
+   * Utilizes an in-memory cache for ultra-fast millisecond resolution.
    */
   static async findOrCreateUser(
     telegramId: number | bigint,
@@ -16,8 +48,22 @@ export class UserService {
     referralCodeArg?: string
   ): Promise<User> {
     const bigTelegramId = BigInt(telegramId);
-    const isAdminConfigured = config.ADMIN_IDS.includes(bigTelegramId.toString());
-    const initialRole: Role = isAdminConfigured ? Role.OWNER : Role.USER;
+    const tgIdStr = bigTelegramId.toString();
+    const isAdminConfigured = config.ADMIN_IDS.includes(tgIdStr);
+
+    // 1. Check in-memory cache for immediate sub-millisecond response
+    const cached = userCache.get(tgIdStr);
+    const now = Date.now();
+    if (cached && now - cached.cachedAt < USER_CACHE_TTL_MS && !referralCodeArg) {
+      const u = cached.user;
+      const usernameMatch = (u.username || null) === (username || null);
+      const firstMatch = (u.firstName || null) === (firstName || null);
+      const lastMatch = (u.lastName || null) === (lastName || null);
+
+      if (usernameMatch && firstMatch && lastMatch) {
+        return u;
+      }
+    }
 
     let user = await prisma.user.findUnique({
       where: { telegramId: bigTelegramId },
@@ -37,8 +83,8 @@ export class UserService {
       }
 
       // Check if this user was pre-authorized via @username or Telegram ID
-      let preAuthRole: Role = initialRole;
-      const preAuthChecks: string[] = [bigTelegramId.toString()];
+      let preAuthRole: Role = isAdminConfigured ? Role.OWNER : Role.USER;
+      const preAuthChecks: string[] = [tgIdStr];
       if (username) preAuthChecks.push(username.toLowerCase());
 
       const preAuth = await prisma.preAuthorizedStaff.findFirst({
@@ -46,11 +92,9 @@ export class UserService {
       });
 
       if (preAuth) {
-        // Pre-auth role takes precedence unless user is already a root admin
         preAuthRole = isAdminConfigured ? Role.OWNER : preAuth.role;
-        // Remove pre-authorization record — it has been consumed
         await prisma.preAuthorizedStaff.delete({ where: { id: preAuth.id } }).catch(() => {});
-        logger.info('Pre-authorized staff joined', { username, telegramId: bigTelegramId.toString(), role: preAuthRole });
+        logger.info('Pre-authorized staff joined', { username, telegramId: tgIdStr, role: preAuthRole });
       }
 
       user = await prisma.user.create({
@@ -74,10 +118,10 @@ export class UserService {
             referrerId,
             referredId: user.id,
           },
-        });
+        }).catch(() => {});
       }
 
-      logger.info('Registered new user', { userId: user.id, telegramId: bigTelegramId.toString() });
+      logger.info('Registered new user', { userId: user.id, telegramId: tgIdStr });
     } else {
       // Update names or username if changed, and ensure config admins have at least ADMIN/OWNER
       let shouldUpdate = false;
@@ -100,22 +144,6 @@ export class UserService {
         shouldUpdate = true;
       }
 
-      // Also check if this existing user has a pending pre-authorization
-      // (e.g. they were added by admin but the record matched a different lookup key)
-      if (!shouldUpdate || !dataToUpdate.role) {
-        const preAuthChecks: string[] = [user.telegramId.toString()];
-        if (username) preAuthChecks.push(username.toLowerCase());
-        const preAuth = await prisma.preAuthorizedStaff.findFirst({
-          where: { query: { in: preAuthChecks } },
-        });
-        if (preAuth && user.role === Role.USER) {
-          dataToUpdate.role = preAuth.role;
-          shouldUpdate = true;
-          await prisma.preAuthorizedStaff.delete({ where: { id: preAuth.id } }).catch(() => {});
-          logger.info('Applied pre-auth role to existing user', { userId: user.id, role: preAuth.role });
-        }
-      }
-
       if (shouldUpdate) {
         user = await prisma.user.update({
           where: { id: user.id },
@@ -124,19 +152,41 @@ export class UserService {
       }
     }
 
+    UserService.setCachedUser(user);
     return user;
   }
 
   static async getUserByTelegramId(telegramId: number | bigint): Promise<User | null> {
-    return prisma.user.findUnique({
+    const tgIdStr = telegramId.toString();
+    const cached = userCache.get(tgIdStr);
+    if (cached && Date.now() - cached.cachedAt < USER_CACHE_TTL_MS) {
+      return cached.user;
+    }
+
+    const user = await prisma.user.findUnique({
       where: { telegramId: BigInt(telegramId) },
     });
+
+    if (user) {
+      UserService.setCachedUser(user);
+    }
+    return user;
   }
 
   static async getUserById(id: string): Promise<User | null> {
-    return prisma.user.findUnique({
+    const cached = userCache.get(id);
+    if (cached && Date.now() - cached.cachedAt < USER_CACHE_TTL_MS) {
+      return cached.user;
+    }
+
+    const user = await prisma.user.findUnique({
       where: { id },
     });
+
+    if (user) {
+      UserService.setCachedUser(user);
+    }
+    return user;
   }
 
   /**
@@ -149,7 +199,7 @@ export class UserService {
     description: string,
     referenceId?: string
   ): Promise<User> {
-    return prisma.$transaction(async (tx) => {
+    const updatedUser = await prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (!user) {
         throw new Error('User not found for balance update');
@@ -162,7 +212,7 @@ export class UserService {
         throw new Error('Insufficient wallet balance');
       }
 
-      const updatedUser = await tx.user.update({
+      const res = await tx.user.update({
         where: { id: userId },
         data: { balance: newBalance },
       });
@@ -178,24 +228,30 @@ export class UserService {
         },
       });
 
-      logger.info('Updated user balance', { userId, amount, newBalance, type });
-
-      return updatedUser;
+      return res;
     });
+
+    UserService.setCachedUser(updatedUser);
+    logger.info('Updated user balance', { userId, amount, newBalance: updatedUser.balance, type });
+    return updatedUser;
   }
 
   static async banUser(userId: string): Promise<User> {
-    return prisma.user.update({
+    const user = await prisma.user.update({
       where: { id: userId },
       data: { isBanned: true },
     });
+    UserService.setCachedUser(user);
+    return user;
   }
 
   static async unbanUser(userId: string): Promise<User> {
-    return prisma.user.update({
+    const user = await prisma.user.update({
       where: { id: userId },
       data: { isBanned: false },
     });
+    UserService.setCachedUser(user);
+    return user;
   }
 
   /**
@@ -206,9 +262,7 @@ export class UserService {
 
     // Check if numeric (Telegram ID)
     if (/^\d+$/.test(cleanQuery)) {
-      const byTelegramId = await prisma.user.findUnique({
-        where: { telegramId: BigInt(cleanQuery) },
-      });
+      const byTelegramId = await UserService.getUserByTelegramId(BigInt(cleanQuery));
       if (byTelegramId) return byTelegramId;
     }
 
@@ -221,6 +275,10 @@ export class UserService {
         },
       },
     });
+
+    if (byUsername) {
+      UserService.setCachedUser(byUsername);
+    }
 
     return byUsername;
   }
@@ -262,6 +320,7 @@ export class UserService {
       where: { id: userId },
       data: { role },
     });
+    UserService.setCachedUser(updated);
     logger.info('User role updated', { userId, role });
     return updated;
   }
