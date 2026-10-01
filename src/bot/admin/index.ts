@@ -30,6 +30,7 @@ adminComposer.use(adminGuard);
 
 // ⚙️ Admin Main Menu
 adminComposer.action('admin_main', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (ctx.session) {
     ctx.session.adminState = undefined;
     ctx.session.adminData = undefined;
@@ -43,6 +44,7 @@ adminComposer.action('admin_main', async (ctx) => {
 
 // 📊 Dashboard Metrics
 adminComposer.action('admin_dashboard', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const metrics = await AdminService.getDashboardMetrics();
 
   const msg =
@@ -64,6 +66,7 @@ adminComposer.action('admin_dashboard', async (ctx) => {
 
 // 📦 Products Management Screen
 adminComposer.action('admin_products', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const categories = await ProductService.getAllCategories();
   const msg = `📦 *Product Management*\n\nYou can add new products in real-time or view current inventory.\nTotal Active Categories: ${categories.length}`;
   await ctx.editMessageText(msg, {
@@ -74,6 +77,7 @@ adminComposer.action('admin_products', async (ctx) => {
 
 // 🗂 Categories Management Screen
 adminComposer.action('admin_categories', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const categories = await ProductService.getAllCategories();
   let text = `🗂 *Category Management*\n\nActive Categories (${categories.length}):\n`;
   categories.forEach((c) => {
@@ -88,6 +92,7 @@ adminComposer.action('admin_categories', async (ctx) => {
 
 // ➕ Add New Category Action
 adminComposer.action('admin_add_category', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_CATEGORY_NAME';
 
@@ -99,9 +104,10 @@ adminComposer.action('admin_add_category', async (ctx) => {
 
 // ➕ Add New Product Action — Step 1: Select Category
 adminComposer.action('admin_add_product', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const categories = await ProductService.getActiveCategories();
   if (categories.length === 0) {
-    await ctx.answerCbQuery('Please add at least one category first!', { show_alert: true });
+    await ctx.answerCbQuery('Please add at least one category first!', { show_alert: true }).catch(() => {});
     return;
   }
 
@@ -118,11 +124,12 @@ adminComposer.action('admin_add_product', async (ctx) => {
 
 // ➕ Add New Product — Step 2: Category Selected -> Ask Product Name
 adminComposer.action(/^admin_select_cat_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const categoryId = ctx.match[1];
   const category = await ProductService.getCategoryById(categoryId);
 
   if (!category) {
-    await ctx.answerCbQuery('Category not found.');
+    await ctx.answerCbQuery('Category not found.').catch(() => {});
     return;
   }
 
@@ -141,6 +148,7 @@ adminComposer.action(/^admin_select_cat_(.+)$/, async (ctx) => {
 
 // 💳 Pending Payments Review
 adminComposer.action('admin_payments', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const pendingPayments = await prisma.payment.findMany({
     where: { status: PaymentStatus.WAITING_FOR_VERIFICATION },
     include: { user: true, order: true },
@@ -304,6 +312,7 @@ adminComposer.action(/^admin_reject_pay_(.+)$/, async (ctx) => {
 
 // 📦 Stock Management Screen
 adminComposer.action('admin_stock', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const variants = await prisma.productVariant.findMany({
     include: {
       product: true,
@@ -345,6 +354,7 @@ adminComposer.action('admin_stock', async (ctx) => {
 
 // 📋 Orders Management Screen
 adminComposer.action('admin_orders', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const totalOrders = await prisma.order.count();
   const pendingOrders = await prisma.order.count({ where: { orderStatus: 'PENDING' } });
   const completedOrders = await prisma.order.count({ where: { orderStatus: 'COMPLETED' } });
@@ -363,6 +373,7 @@ adminComposer.action('admin_orders', async (ctx) => {
 
 // 👥 Users Management Screen
 adminComposer.action('admin_users', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const totalUsers = await prisma.user.count();
   const bannedUsers = await prisma.user.count({ where: { isBanned: true } });
 
@@ -379,6 +390,7 @@ adminComposer.action('admin_users', async (ctx) => {
 
 // 🎟 Coupons Screen
 adminComposer.action('admin_coupons', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const coupons = await prisma.coupon.findMany();
   let text = `🎟 *Discount Coupons*\n\nActive Coupons (${coupons.length}):\n`;
   if (coupons.length === 0) text += `No coupons created yet.`;
@@ -394,6 +406,7 @@ adminComposer.action('admin_coupons', async (ctx) => {
 
 // 📢 Broadcast Screen — Prompt Admin for Broadcast Text/Photo
 adminComposer.action('admin_broadcast', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const userCount = await prisma.user.count({ where: { isBanned: false } });
 
   if (!ctx.session) ctx.session = {};
@@ -415,7 +428,7 @@ adminComposer.action('admin_broadcast', async (ctx) => {
 adminComposer.action('admin_confirm_broadcast', async (ctx) => {
   const adminData = ctx.session?.adminData;
   if (!adminData || (!adminData.broadcastText && !adminData.fileId)) {
-    await ctx.answerCbQuery('⚠️ Broadcast message context lost. Please try again.', { show_alert: true });
+    await ctx.answerCbQuery('⚠️ Broadcast message context lost. Please try again.', { show_alert: true }).catch(() => {});
     return;
   }
 
@@ -454,6 +467,7 @@ adminComposer.action('admin_confirm_broadcast', async (ctx) => {
 
 // ⭐ Reviews Screen
 adminComposer.action('admin_reviews', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const totalReviews = await prisma.review.count();
   const msg = `⭐ *Customer Reviews Moderation*\n\nTotal Product Reviews: *${totalReviews}*`;
   await ctx.editMessageText(msg, {
@@ -464,6 +478,7 @@ adminComposer.action('admin_reviews', async (ctx) => {
 
 // 📥 Select Variant for Stock Upload — Step 1: Ask for Price
 adminComposer.action(/^admin_add_stock_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const variantId = ctx.match[1];
   const variant = await prisma.productVariant.findUnique({
     where: { id: variantId },
@@ -471,7 +486,7 @@ adminComposer.action(/^admin_add_stock_(.+)$/, async (ctx) => {
   });
 
   if (!variant) {
-    await ctx.answerCbQuery('Product variant not found.');
+    await ctx.answerCbQuery('Product variant not found.').catch(() => {});
     return;
   }
 
@@ -493,6 +508,7 @@ adminComposer.action(/^admin_add_stock_(.+)$/, async (ctx) => {
 
 // 🗑 Delete Stock — Select Variant
 adminComposer.action(/^admin_delete_stock_variant_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const variantId = ctx.match[1];
   const variant = await prisma.productVariant.findUnique({
     where: { id: variantId },
@@ -507,12 +523,12 @@ adminComposer.action(/^admin_delete_stock_variant_(.+)$/, async (ctx) => {
   });
 
   if (!variant) {
-    await ctx.answerCbQuery('Variant not found.');
+    await ctx.answerCbQuery('Variant not found.').catch(() => {});
     return;
   }
 
   if (variant.stockItems.length === 0) {
-    await ctx.answerCbQuery('No available stock items to delete.', { show_alert: true });
+    await ctx.answerCbQuery('No available stock items to delete.', { show_alert: true }).catch(() => {});
     return;
   }
 
@@ -537,6 +553,7 @@ adminComposer.action(/^admin_delete_stock_variant_(.+)$/, async (ctx) => {
 
 // 🗑 Delete Stock Item — Confirm & Execute
 adminComposer.action(/^admin_delete_stock_item_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const itemId = ctx.match[1];
 
   const item = await prisma.stockItem.findUnique({
@@ -545,12 +562,12 @@ adminComposer.action(/^admin_delete_stock_item_(.+)$/, async (ctx) => {
   });
 
   if (!item) {
-    await ctx.answerCbQuery('Stock item not found or already deleted.', { show_alert: true });
+    await ctx.answerCbQuery('Stock item not found or already deleted.', { show_alert: true }).catch(() => {});
     return;
   }
 
   if (item.isSold) {
-    await ctx.answerCbQuery('⚠️ Cannot delete a sold stock item.', { show_alert: true });
+    await ctx.answerCbQuery('⚠️ Cannot delete a sold stock item.', { show_alert: true }).catch(() => {});
     return;
   }
 
@@ -558,7 +575,7 @@ adminComposer.action(/^admin_delete_stock_item_(.+)$/, async (ctx) => {
 
   const remaining = await ProductService.getAvailableStockCount(item.variantId);
 
-  await ctx.answerCbQuery('✅ Stock item deleted successfully.', { show_alert: true });
+  await ctx.answerCbQuery('✅ Stock item deleted successfully.', { show_alert: true }).catch(() => {});
   await ctx.editMessageText(
     `✅ *Stock item deleted.*\n\n📦 *Product:* ${item.variant.product.name}\n📊 *Remaining Stock:* ${remaining} items`,
     {
@@ -573,6 +590,7 @@ adminComposer.action(/^admin_delete_stock_item_(.+)$/, async (ctx) => {
 
 // 📥 Assign Pending Stock Lines Action
 adminComposer.action(/^admin_assign_stock_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const variantId = ctx.match[1];
   const variant = await prisma.productVariant.findUnique({
     where: { id: variantId },
@@ -580,13 +598,13 @@ adminComposer.action(/^admin_assign_stock_(.+)$/, async (ctx) => {
   });
 
   if (!variant) {
-    await ctx.answerCbQuery('Product variant not found.');
+    await ctx.answerCbQuery('Product variant not found.').catch(() => {});
     return;
   }
 
   const lines = ctx.session?.pendingStockLines || [];
   if (lines.length === 0) {
-    await ctx.answerCbQuery('No pending accounts found to import.', { show_alert: true });
+    await ctx.answerCbQuery('No pending accounts found to import.', { show_alert: true }).catch(() => {});
     return;
   }
 
@@ -612,6 +630,7 @@ adminComposer.action(/^admin_assign_stock_(.+)$/, async (ctx) => {
 
 // 🤖 Bot Settings Screen
 adminComposer.action('admin_bot_settings', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (ctx.session) {
     ctx.session.adminState = undefined;
     ctx.session.adminData = undefined;
@@ -644,6 +663,7 @@ adminComposer.action('admin_bot_settings', async (ctx) => {
 
 // 📛 Change Bot Name — Prompt
 adminComposer.action('admin_change_name', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_BOT_NAME';
 
@@ -658,6 +678,7 @@ adminComposer.action('admin_change_name', async (ctx) => {
 
 // 📝 Change Bot Description — Prompt
 adminComposer.action('admin_change_description', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_BOT_DESCRIPTION';
 
@@ -672,6 +693,7 @@ adminComposer.action('admin_change_description', async (ctx) => {
 
 // 💬 Change Bot Bio / Short Description — Prompt
 adminComposer.action('admin_change_short_desc', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_BOT_SHORT_DESC';
 
@@ -686,6 +708,7 @@ adminComposer.action('admin_change_short_desc', async (ctx) => {
 
 // 🎧 Change Support Handle — Prompt
 adminComposer.action('admin_change_support', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_BOT_SUPPORT_USERNAME';
 
@@ -709,8 +732,8 @@ adminComposer.action('admin_change_support', async (ctx) => {
 
 // 🗑 Clear Support Handle
 adminComposer.action('admin_clear_support', async (ctx) => {
+  await ctx.answerCbQuery('✅ Support handle removed!', { show_alert: true }).catch(() => {});
   await SettingService.setSetting('support_username', '__NONE__');
-  await ctx.answerCbQuery('✅ Support handle removed!', { show_alert: true });
   await ctx.editMessageText('✅ *Store Support Handle Removed!*', {
     parse_mode: 'Markdown',
     reply_markup: getBotSettingsKeyboard().reply_markup,
@@ -719,6 +742,7 @@ adminComposer.action('admin_clear_support', async (ctx) => {
 
 // 👤 Change Bot Profile Photo — Info (Telegram API limitation)
 adminComposer.action('admin_change_photo', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const me = await ctx.telegram.getMe().catch(() => ({ username: 'your bot' }));
   await ctx.editMessageText(
     `👤 *Change Bot Profile Avatar Photo*\n\n` +
@@ -740,6 +764,7 @@ adminComposer.action('admin_change_photo', async (ctx) => {
 
 // 🖼 Change Bot Description/Intro Banner Photo — Info & Direct Guide
 adminComposer.action('admin_change_desc_photo', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const me = await ctx.telegram.getMe().catch(() => ({ username: 'your bot' }));
   await ctx.editMessageText(
     `🖼 *Change Bot Intro / Description Banner Photo*\n\n` +
@@ -762,6 +787,7 @@ adminComposer.action('admin_change_desc_photo', async (ctx) => {
 
 // 🌆 Store Banner Photo — Prompt
 adminComposer.action('admin_change_banner', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_BOT_BANNER_PHOTO';
 
@@ -785,8 +811,8 @@ adminComposer.action('admin_change_banner', async (ctx) => {
 
 // 🗑 Clear Store Banner Photo
 adminComposer.action('admin_clear_banner', async (ctx) => {
+  await ctx.answerCbQuery('✅ Banner photo removed!', { show_alert: true }).catch(() => {});
   await SettingService.deleteSetting('banner_photo_file_id');
-  await ctx.answerCbQuery('✅ Banner photo removed!', { show_alert: true });
   await ctx.editMessageText('✅ *Store Welcome Banner Photo Removed!*', {
     parse_mode: 'Markdown',
     reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')]]).reply_markup,
@@ -795,6 +821,7 @@ adminComposer.action('admin_clear_banner', async (ctx) => {
 
 // 💳 Payment Accounts List
 adminComposer.action('admin_payment_accounts', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (ctx.session) {
     ctx.session.adminState = undefined;
     ctx.session.adminData = undefined;
@@ -814,11 +841,12 @@ adminComposer.action('admin_payment_accounts', async (ctx) => {
 
 // 💳 View Single Payment Account
 adminComposer.action(/^admin_payacc_view_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const accountId = ctx.match[1];
   const account = await PaymentAccountService.getAccountById(accountId);
 
   if (!account) {
-    await ctx.answerCbQuery('Payment account not found.');
+    await ctx.answerCbQuery('Payment account not found.').catch(() => {});
     return;
   }
 
@@ -843,6 +871,7 @@ adminComposer.action(/^admin_payacc_view_(.+)$/, async (ctx) => {
 
 // ✏️ Edit Account Number
 adminComposer.action(/^admin_payacc_edit_num_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const accountId = ctx.match[1];
   const account = await PaymentAccountService.getAccountById(accountId);
   if (!account) return;
@@ -864,6 +893,7 @@ adminComposer.action(/^admin_payacc_edit_num_(.+)$/, async (ctx) => {
 
 // 🏷 Edit Account Title
 adminComposer.action(/^admin_payacc_edit_title_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const accountId = ctx.match[1];
   const account = await PaymentAccountService.getAccountById(accountId);
   if (!account) return;
@@ -885,6 +915,7 @@ adminComposer.action(/^admin_payacc_edit_title_(.+)$/, async (ctx) => {
 
 // 📝 Edit Account Instructions
 adminComposer.action(/^admin_payacc_edit_instr_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const accountId = ctx.match[1];
   const account = await PaymentAccountService.getAccountById(accountId);
   if (!account) return;
@@ -911,7 +942,7 @@ adminComposer.action(/^admin_payacc_toggle_(.+)$/, async (ctx) => {
 
   await ctx.answerCbQuery(
     updated.isEnabled ? '✅ Account enabled for checkout' : '⏸ Account disabled'
-  );
+  ).catch(() => {});
 
   const msg =
     `💳 *Payment Account Details*\n\n` +
@@ -931,7 +962,7 @@ adminComposer.action(/^admin_payacc_toggle_(.+)$/, async (ctx) => {
 adminComposer.action(/^admin_payacc_delete_(.+)$/, async (ctx) => {
   const accountId = ctx.match[1];
   await PaymentAccountService.deleteAccount(accountId);
-  await ctx.answerCbQuery('🗑 Account deleted successfully.');
+  await ctx.answerCbQuery('🗑 Account deleted successfully.').catch(() => {});
 
   const accounts = await PaymentAccountService.getAllAccounts();
   const msg =
@@ -948,6 +979,7 @@ adminComposer.action(/^admin_payacc_delete_(.+)$/, async (ctx) => {
 
 // ➕ Add New Payment Account Wizard — Step 1: Provider Name
 adminComposer.action('admin_payacc_add', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_NEW_PAYACC_PROVIDER';
   ctx.session.adminData = {};
@@ -965,6 +997,7 @@ adminComposer.action('admin_payacc_add', async (ctx) => {
 
 // 🛡 Staff & Roles Management Screen
 adminComposer.action('admin_roles', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (ctx.session) {
     ctx.session.adminState = undefined;
     ctx.session.adminData = undefined;
@@ -987,6 +1020,7 @@ adminComposer.action('admin_roles', async (ctx) => {
 
 // 📋 View Full Staff List (Owners, Admins, Pending Pre-Authorizations)
 adminComposer.action('admin_roles_list', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const staffUsers = await UserService.getAllStaffUsers();
   const preAuthUsers = await UserService.getAllPreAuthorizedStaff();
 
@@ -1035,11 +1069,12 @@ adminComposer.action('admin_roles_list', async (ctx) => {
 
 // 🛡 View Single Staff Member / Role Assignment
 adminComposer.action(/^admin_roles_view_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const userId = ctx.match[1];
   const user = await UserService.getUserById(userId);
 
   if (!user) {
-    await ctx.answerCbQuery('User not found.');
+    await ctx.answerCbQuery('User not found.').catch(() => {});
     return;
   }
 
@@ -1060,6 +1095,7 @@ adminComposer.action(/^admin_roles_view_(.+)$/, async (ctx) => {
 
 // ➕ Add / Change User Role — Prompt
 adminComposer.action('admin_roles_add', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_USER_LOOKUP_FOR_ROLE';
 
@@ -1076,11 +1112,12 @@ adminComposer.action('admin_roles_add', async (ctx) => {
 
 // 👑 / 🛡 / 👤 Role Assignment Execution Action
 adminComposer.action(/^admin_roles_set_([A-Z]+)_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const targetRole = ctx.match[1] as Role;
   const targetUserId = ctx.match[2];
 
   if (!['OWNER', 'ADMIN', 'USER'].includes(targetRole)) {
-    await ctx.answerCbQuery('Invalid role specified.');
+    await ctx.answerCbQuery('Invalid role specified.').catch(() => {});
     return;
   }
 
@@ -1088,7 +1125,7 @@ adminComposer.action(/^admin_roles_set_([A-Z]+)_(.+)$/, async (ctx) => {
     const updated = await UserService.setUserRole(targetUserId, targetRole);
     const userDisplay = updated.username ? `@${updated.username}` : (updated.firstName || updated.id);
 
-    await ctx.answerCbQuery(`✅ Role set to ${targetRole}!`, { show_alert: true });
+    await ctx.answerCbQuery(`✅ Role set to ${targetRole}!`, { show_alert: true }).catch(() => {});
 
     const msg =
       `✅ *Role Updated Successfully!*\n\n` +
@@ -1104,17 +1141,18 @@ adminComposer.action(/^admin_roles_set_([A-Z]+)_(.+)$/, async (ctx) => {
     });
   } catch (err: any) {
     logger.error('Failed to set user role', { error: err.message });
-    await ctx.answerCbQuery(`⚠️ Error: ${err.message}`, { show_alert: true });
+    await ctx.answerCbQuery(`⚠️ Error: ${err.message}`, { show_alert: true }).catch(() => {});
   }
 });
 
 // 📥 Pre-Auth Role Assignment — for users who haven't started the bot yet
 adminComposer.action(/^admin_preauth_([A-Z]+)_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const targetRole = ctx.match[1] as Role;
   const encodedQuery = ctx.match[2];
 
   if (!['OWNER', 'ADMIN'].includes(targetRole)) {
-    await ctx.answerCbQuery('Invalid role specified.');
+    await ctx.answerCbQuery('Invalid role specified.').catch(() => {});
     return;
   }
 
@@ -1123,7 +1161,7 @@ adminComposer.action(/^admin_preauth_([A-Z]+)_(.+)$/, async (ctx) => {
     rawQuery = Buffer.from(encodedQuery, 'hex').toString('utf8');
     if (!rawQuery) throw new Error('empty');
   } catch {
-    await ctx.answerCbQuery('⚠️ Invalid data. Please try again.', { show_alert: true });
+    await ctx.answerCbQuery('⚠️ Invalid data. Please try again.', { show_alert: true }).catch(() => {});
     return;
   }
 
@@ -1132,7 +1170,7 @@ adminComposer.action(/^admin_preauth_([A-Z]+)_(.+)$/, async (ctx) => {
     await UserService.preAuthorizeStaff(rawQuery, targetRole, adminId);
     const displayQuery = /^\d+$/.test(rawQuery) ? rawQuery : `@${rawQuery}`;
 
-    await ctx.answerCbQuery(`✅ Pre-authorized as ${targetRole}!`, { show_alert: true });
+    await ctx.answerCbQuery(`✅ Pre-authorized as ${targetRole}!`, { show_alert: true }).catch(() => {});
 
     const msg =
       `✅ *Pre-Authorization Saved!*\n\n` +
@@ -1149,7 +1187,7 @@ adminComposer.action(/^admin_preauth_([A-Z]+)_(.+)$/, async (ctx) => {
     });
   } catch (err: any) {
     logger.error('Failed to pre-authorize staff', { error: err.message });
-    await ctx.answerCbQuery(`⚠️ Error: ${err.message}`, { show_alert: true });
+    await ctx.answerCbQuery(`⚠️ Error: ${err.message}`, { show_alert: true }).catch(() => {});
   }
 });
 

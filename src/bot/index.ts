@@ -481,7 +481,7 @@ bot.action(/^prod_(.+)$/, async (ctx) => {
 
 // Buy zero item click handler
 bot.action('buy_zero_item', async (ctx) => {
-  await ctx.answerCbQuery('⚠️ This item is currently out of stock (0 items available).', { show_alert: true });
+  await ctx.answerCbQuery('⚠️ This item is currently out of stock (0 items available).', { show_alert: true }).catch(() => {});
 });
 
 // 🛒 Buy Variant Click — Create Order & Show Payment Selection
@@ -527,7 +527,7 @@ const variantId = ctx.session?.pendingVariantId || matchedVariantId;
 
   const stockCount = await ProductService.getAvailableStockCount(variantId);
   if (quantity > stockCount) {
-    await ctx.answerCbQuery('⚠️ Selected quantity exceeds available stock.', { show_alert: true });
+    await ctx.answerCbQuery('⚠️ Selected quantity exceeds available stock.', { show_alert: true }).catch(() => {});
     return;
   }
 
@@ -683,10 +683,11 @@ bot.action(/^pay_method_acc_(.+)_(.+)$/, async (ctx) => {
 
 // 📱 Legacy / Direct Pay via JazzCash fallback
 bot.action(/^pay_method_jazzcash_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const orderId = ctx.match[1];
   const order = await OrderService.getOrderById(orderId);
   if (!order) {
-    await ctx.answerCbQuery('Order not found.');
+    await ctx.answerCbQuery('Order not found.').catch(() => {});
     return;
   }
 
@@ -722,13 +723,14 @@ bot.action(/^pay_method_jazzcash_(.+)$/, async (ctx) => {
 
 // 💰 Pay via Wallet Balance
 bot.action(/^pay_method_wallet_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
   const orderId = ctx.match[1];
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;
 
   const order = await OrderService.getOrderById(orderId);
   if (!order) {
-    await ctx.answerCbQuery('Order not found.');
+    await ctx.answerCbQuery('Order not found.').catch(() => {});
     return;
   }
 
@@ -745,12 +747,12 @@ bot.action(/^pay_method_wallet_(.+)$/, async (ctx) => {
     );
 
     if (result.status === 'PAID') {
-      await ctx.answerCbQuery('✅ Wallet Payment Successful!');
+      await ctx.answerCbQuery('✅ Wallet Payment Successful!').catch(() => {});
       // Dispatch delivery immediately
       await DeliveryService.processOrderDelivery(order.id, bot);
     }
   } catch (err: any) {
-    await ctx.answerCbQuery(`⚠️ ${err.message || 'Payment failed'}`, { show_alert: true });
+    await ctx.answerCbQuery(`⚠️ ${err.message || 'Payment failed'}`, { show_alert: true }).catch(() => {});
   }
 });
 
