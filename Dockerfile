@@ -9,6 +9,7 @@ RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
+COPY api ./api
 
 RUN npm run build
 RUN npx prisma generate
@@ -20,12 +21,16 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY package*.json ./
-RUN npm ci --only=production
+COPY prisma ./prisma/
+
+# Install production dependencies skipping postinstall script since prisma CLI is in devDependencies
+RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
-COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 EXPOSE 3000
 
-CMD ["node", "dist/bot/index.js"]
+CMD ["node", "dist/src/bot/index.js"]
+
