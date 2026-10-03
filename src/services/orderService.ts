@@ -63,41 +63,44 @@ export class OrderService {
     const finalTotal = Math.max(0, rawTotal - discountAmount);
     const orderNumber = this.generateOrderNumber();
 
-    const order = await prisma.$transaction(async (tx) => {
-      const createdOrder = await tx.order.create({
-        data: {
-          orderNumber,
-          idempotencyKey: idempotencyKey || null,
-          userId,
-          totalAmount: finalTotal,
-          currency: variant.currency,
-          discountAmount,
-          couponId: validCouponId || null,
-          paymentStatus: PaymentStatus.PENDING,
-          orderStatus: OrderStatus.PENDING,
-          deliveryStatus: DeliveryStatus.PENDING,
-          items: {
-            create: [
-              {
-                variantId: variant.id,
-                quantity,
-                unitPrice,
-                totalPrice: rawTotal,
-              },
-            ],
+    const order = await prisma.$transaction(
+      async (tx) => {
+        const createdOrder = await tx.order.create({
+          data: {
+            orderNumber,
+            idempotencyKey: idempotencyKey || null,
+            userId,
+            totalAmount: finalTotal,
+            currency: variant.currency,
+            discountAmount,
+            couponId: validCouponId || null,
+            paymentStatus: PaymentStatus.PENDING,
+            orderStatus: OrderStatus.PENDING,
+            deliveryStatus: DeliveryStatus.PENDING,
+            items: {
+              create: [
+                {
+                  variantId: variant.id,
+                  quantity,
+                  unitPrice,
+                  totalPrice: rawTotal,
+                },
+              ],
+            },
           },
-        },
-        include: {
-          items: { include: { variant: { include: { product: true } } } },
-        },
-      });
+          include: {
+            items: { include: { variant: { include: { product: true } } } },
+          },
+        });
 
-      if (validCouponId) {
-        await CouponService.recordCouponUsage(validCouponId, userId);
-      }
+        if (validCouponId) {
+          await CouponService.recordCouponUsage(validCouponId, userId);
+        }
 
-      return createdOrder;
-    });
+        return createdOrder;
+      },
+      { maxWait: 15000, timeout: 30000 }
+    );
 
     logger.info('Created new order', { orderId: order.id, orderNumber, total: finalTotal });
     return order;

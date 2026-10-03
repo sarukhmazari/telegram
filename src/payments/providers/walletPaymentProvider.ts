@@ -34,36 +34,40 @@ export class WalletPaymentProvider implements IPaymentProvider {
       throw new Error(`Insufficient wallet balance. Available: Rs. ${currentBalance.toFixed(2)}, Required: Rs. ${amount.toFixed(2)}`);
     }
 
-    const payment = await prisma.$transaction(async (tx) => {
-      const createdPayment = await tx.payment.create({
-        data: {
-          idempotencyKey,
-          orderId,
+    const payment = await prisma.$transaction(
+      async (tx) => {
+        const createdPayment = await tx.payment.create({
+          data: {
+            idempotencyKey,
+            orderId,
+            userId,
+            amount,
+            currency,
+            provider: this.providerName,
+            status: PaymentStatus.PAID,
+            transactionReference: `WALLET_TX_${Date.now()}`,
+          },
+        });
+
+        // Deduct balance and log wallet transaction using existing transaction
+        await UserService.updateBalance(
           userId,
-          amount,
-          currency,
-          provider: this.providerName,
-          status: PaymentStatus.PAID,
-          transactionReference: `WALLET_TX_${Date.now()}`,
-        },
-      });
+          -amount,
+          TransactionType.PURCHASE,
+          `Payment for Order #${orderId}`,
+          createdPayment.id,
+          tx
+        );
 
-      // Deduct balance and log wallet transaction
-      await UserService.updateBalance(
-        userId,
-        -amount,
-        TransactionType.PURCHASE,
-        `Payment for Order #${orderId}`,
-        createdPayment.id
-      );
+        await tx.order.update({
+          where: { id: orderId },
+          data: { paymentStatus: PaymentStatus.PAID, paymentMethod: this.providerName },
+        });
 
-      await tx.order.update({
-        where: { id: orderId },
-        data: { paymentStatus: PaymentStatus.PAID, paymentMethod: this.providerName },
-      });
-
-      return createdPayment;
-    });
+        return createdPayment;
+      },
+      { maxWait: 15000, timeout: 30000 }
+    );
 
     logger.info('Wallet payment processed successfully', { paymentId: payment.id, orderId, userId, amount });
 
@@ -89,25 +93,29 @@ export class WalletPaymentProvider implements IPaymentProvider {
     const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
     if (!payment || payment.status !== PaymentStatus.PAID) return false;
 
-    await prisma.$transaction(async (tx) => {
-      await UserService.updateBalance(
-        payment.userId,
-        Number(payment.amount),
-        TransactionType.REFUND,
-        `Refund for Payment #${payment.id}`,
-        payment.id
-      );
+    await prisma.$transaction(
+      async (tx) => {
+        await UserService.updateBalance(
+          payment.userId,
+          Number(payment.amount),
+          TransactionType.REFUND,
+          `Refund for Payment #${payment.id}`,
+          payment.id,
+          tx
+        );
 
-      await tx.payment.update({
-        where: { id: paymentId },
-        data: { status: PaymentStatus.REFUNDED },
-      });
+        await tx.payment.update({
+          where: { id: paymentId },
+          data: { status: PaymentStatus.REFUNDED },
+        });
 
-      await tx.order.update({
-        where: { id: payment.orderId },
-        data: { paymentStatus: PaymentStatus.REFUNDED },
-      });
-    });
+        await tx.order.update({
+          where: { id: payment.orderId },
+          data: { paymentStatus: PaymentStatus.REFUNDED },
+        });
+      },
+      { maxWait: 15000, timeout: 30000 }
+    );
 
     return true;
   }

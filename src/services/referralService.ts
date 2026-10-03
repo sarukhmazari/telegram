@@ -16,24 +16,28 @@ export class ReferralService {
     const rewardAmount = (orderTotal * rewardPercentage) / 100;
     if (rewardAmount <= 0) return false;
 
-    await prisma.$transaction(async (tx) => {
-      await tx.referral.update({
-        where: { id: referral.id },
-        data: {
-          rewardAmount,
-          isRewarded: true,
-        },
-      });
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.referral.update({
+          where: { id: referral.id },
+          data: {
+            rewardAmount,
+            isRewarded: true,
+          },
+        });
 
-      // Add balance to referrer
-      await UserService.updateBalance(
-        referral.referrerId,
-        rewardAmount,
-        TransactionType.ADMIN_CREDIT,
-        `Referral reward for customer purchase #${referredUserId}`,
-        referral.id
-      );
-    });
+        // Add balance to referrer using the transaction
+        await UserService.updateBalance(
+          referral.referrerId,
+          rewardAmount,
+          TransactionType.ADMIN_CREDIT,
+          `Referral reward for customer purchase #${referredUserId}`,
+          referral.id,
+          tx
+        );
+      },
+      { maxWait: 15000, timeout: 30000 }
+    );
 
     logger.info('Processed referral purchase reward', { referrerId: referral.referrerId, rewardAmount });
     return true;

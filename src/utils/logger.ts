@@ -9,8 +9,8 @@ const SENSITIVE_KEYS = [
   'content',
   'credentials',
   'key',
-  'deliveryData',
-  'encryptionKey',
+  'deliverydata',
+  'encryptionkey',
 ];
 
 function sanitizeObject(obj: any): any {
@@ -36,26 +36,38 @@ function sanitizeObject(obj: any): any {
 }
 
 const sanitizeFormat = winston.format((info) => {
-  return sanitizeObject(info);
+  for (const key of Object.keys(info)) {
+    if (key !== 'level' && key !== 'message' && key !== 'timestamp') {
+      if (SENSITIVE_KEYS.some((sk) => key.toLowerCase().includes(sk))) {
+        info[key] = '[REDACTED_SECRET]';
+      } else if (typeof info[key] === 'object' && info[key] !== null) {
+        info[key] = sanitizeObject(info[key]);
+      }
+    }
+  }
+  return info;
 });
 
 export const logger = winston.createLogger({
-  level: config.LOG_LEVEL,
+  level: config.LOG_LEVEL || 'info',
   format: winston.format.combine(
-    winston.format.timestamp(),
-    sanitizeFormat(),
-    winston.format.json()
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    sanitizeFormat()
   ),
   transports: [
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
-        winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
         winston.format.printf(({ timestamp, level, message, ...meta }) => {
-          const metaStr = Object.keys(meta).length ? JSON.stringify(meta) : '';
-          return `[${timestamp}] ${level}: ${message} ${metaStr}`;
+          const cleanMeta: Record<string, any> = {};
+          for (const key of Object.keys(meta)) {
+            cleanMeta[key] = meta[key];
+          }
+          const metaStr = Object.keys(cleanMeta).length ? ` ${JSON.stringify(cleanMeta)}` : '';
+          return `[${timestamp}] ${level}: ${message}${metaStr}`;
         })
       ),
     }),
   ],
 });
+

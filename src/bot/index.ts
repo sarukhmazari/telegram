@@ -360,12 +360,12 @@ bot.action('menu_support', async (ctx) => {
 bot.action(/^cat_(.+)$/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const categoryId = ctx.match[1];
-  const category = await ProductService.getCategoryById(categoryId);
+  const category = await ProductService.getCategoryWithDetails(categoryId);
   if (!category) {
     return;
   }
 
-  const products = await ProductService.getProductsByCategory(categoryId);
+  const products = category.products || [];
 
   if (products.length === 0) {
     const msg =
@@ -387,11 +387,11 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
     await ctx.editMessageText(msg, {
       parse_mode: 'Markdown',
       reply_markup: keyboard.reply_markup,
-    });
+    }).catch(() => {});
     return;
   }
 
-  const mainProduct = await ProductService.getProductById(products[0].id);
+  const mainProduct = products[0];
   const rawProductName = mainProduct ? mainProduct.name : category.name;
   const description = mainProduct ? mainProduct.description : (category.description || 'No description provided.');
 
@@ -399,11 +399,11 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
   let stockCount = 0;
   let variantId = '';
 
-  if (mainProduct && mainProduct.variants.length > 0) {
+  if (mainProduct && mainProduct.variants && mainProduct.variants.length > 0) {
     const variant = mainProduct.variants[0];
     variantId = variant.id;
     priceStr = Number(variant.price).toFixed(2);
-    stockCount = await ProductService.getAvailableStockCount(variant.id);
+    stockCount = (variant as any)._count?.stockItems ?? 0;
   }
 
   const msg =
@@ -429,7 +429,7 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
   await ctx.editMessageText(msg, {
     parse_mode: 'Markdown',
     reply_markup: keyboard.reply_markup,
-  });
+  }).catch(() => {});
 });
 
 // Product Click — Show Details
@@ -450,7 +450,7 @@ bot.action(/^prod_(.+)$/, async (ctx) => {
     const variant = product.variants[0];
     variantId = variant.id;
     priceStr = Number(variant.price).toFixed(2);
-    stockCount = await ProductService.getAvailableStockCount(variant.id);
+    stockCount = (variant as any)._count?.stockItems ?? 0;
   }
 
   const msg =
@@ -476,7 +476,7 @@ bot.action(/^prod_(.+)$/, async (ctx) => {
   await ctx.editMessageText(msg, {
     parse_mode: 'Markdown',
     reply_markup: keyboard.reply_markup,
-  });
+  }).catch(() => {});
 });
 
 // Buy zero item click handler
@@ -846,19 +846,22 @@ export async function startBot() {
   await connectDatabase();
   await PaymentAccountService.seedDefaultIfEmpty();
 
+  const botInfo = await bot.telegram.getMe();
+  bot.botInfo = botInfo;
+
   if (config.BOT_MODE === 'webhook' && config.WEBHOOK_URL) {
     logger.info(`Starting bot in WEBHOOK mode at ${config.WEBHOOK_URL}`);
     await bot.telegram.setWebhook(config.WEBHOOK_URL).catch((err) => {
       logger.error('Webhook configuration error', { error: err.message });
     });
+    logger.info(`✅ Bot webhook set successfully for @${botInfo.username}`);
   } else {
     logger.info('Starting bot in LONG POLLING mode...');
     await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
     
-    await bot.launch().then(() => {
-      logger.info(`✅ Bot launched successfully as @${bot.botInfo?.username}`);
-    }).catch((err) => {
-      logger.error('Bot launch error', { error: err.message });
+    logger.info(`✅ Bot launched successfully as @${botInfo.username}`);
+    bot.launch({ dropPendingUpdates: false }).catch((err) => {
+      logger.error('Bot runtime error', { error: err.message });
     });
   }
 }
@@ -873,4 +876,5 @@ if (!process.env.VERCEL && !process.env.SERVERLESS) {
     logger.error('Fatal error during bot initialization', { err });
   });
 }
+
 

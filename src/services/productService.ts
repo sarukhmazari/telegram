@@ -6,7 +6,13 @@ let cachedActiveCategories: (Category & { _count: { products: number } })[] | nu
 let cachedActiveCategoriesTime = 0;
 let cachedAllCategories: Category[] | null = null;
 let cachedAllCategoriesTime = 0;
-const CATEGORY_CACHE_TTL_MS = 30 * 1000; // 30 seconds
+
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+// In-memory caches for sub-millisecond response
+const categoryDetailsCache = new Map<string, { data: any; time: number }>();
+const productDetailsCache = new Map<string, { data: any; time: number }>();
+const stockCountCache = new Map<string, { count: number; time: number }>();
 
 export class ProductService {
   static invalidateCategoryCache() {
@@ -14,13 +20,16 @@ export class ProductService {
     cachedActiveCategoriesTime = 0;
     cachedAllCategories = null;
     cachedAllCategoriesTime = 0;
+    categoryDetailsCache.clear();
+    productDetailsCache.clear();
+    stockCountCache.clear();
   }
 
   // --- Category Operations ---
 
   static async getActiveCategories(): Promise<(Category & { _count: { products: number } })[]> {
     const now = Date.now();
-    if (cachedActiveCategories && now - cachedActiveCategoriesTime < CATEGORY_CACHE_TTL_MS) {
+    if (cachedActiveCategories && now - cachedActiveCategoriesTime < CACHE_TTL_MS) {
       return cachedActiveCategories;
     }
 
@@ -41,7 +50,7 @@ export class ProductService {
 
   static async getAllCategories(): Promise<Category[]> {
     const now = Date.now();
-    if (cachedAllCategories && now - cachedAllCategoriesTime < CATEGORY_CACHE_TTL_MS) {
+    if (cachedAllCategories && now - cachedAllCategoriesTime < CACHE_TTL_MS) {
       return cachedAllCategories;
     }
 
@@ -55,9 +64,57 @@ export class ProductService {
   }
 
   static async getCategoryById(id: string): Promise<Category | null> {
-    return prisma.category.findUnique({
+    const cached = categoryDetailsCache.get(id);
+    if (cached && Date.now() - cached.time < CACHE_TTL_MS) {
+      return cached.data;
+    }
+
+    const category = await prisma.category.findUnique({
       where: { id },
     });
+
+    return category;
+  }
+
+  /**
+   * Ultra-fast single-query method that loads Category + Active Products + Variants + Live Stock Count
+   */
+  static async getCategoryWithDetails(categoryId: string) {
+    const now = Date.now();
+    const cached = categoryDetailsCache.get(categoryId);
+    if (cached && now - cached.time < CACHE_TTL_MS) {
+      return cached.data;
+    }
+
+    const category = await prisma.category.findUnique({
+      where: { id: categoryId },
+      include: {
+        products: {
+          where: { status: ProductStatus.ACTIVE },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            variants: {
+              where: { isEnabled: true },
+              include: {
+                _count: {
+                  select: {
+                    stockItems: {
+                      where: { isSold: false, lockedAt: null },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (category) {
+      categoryDetailsCache.set(categoryId, { data: category, time: now });
+    }
+
+    return category;
   }
 
   static async createCategory(name: string, description?: string, position: number = 0): Promise<Category> {
@@ -105,15 +162,25 @@ export class ProductService {
   }
 
   static async getProductById(id: string) {
-    return prisma.product.findUnique({
+    const now = Date.now();
+    const cached = productDetailsCache.get(id);
+    if (cached && now - cached.time < CACHE_TTL_MS) {
+      return cached.data;
+    }
+
+    const product = await prisma.product.findUnique({
       where: { id },
       include: {
         category: true,
         variants: {
           where: { isEnabled: true },
           include: {
-            stockItems: {
-              where: { isSold: false, lockedAt: null },
+            _count: {
+              select: {
+                stockItems: {
+                  where: { isSold: false, lockedAt: null },
+                },
+              },
             },
           },
         },
@@ -122,6 +189,12 @@ export class ProductService {
         },
       },
     });
+
+    if (product) {
+      productDetailsCache.set(id, { data: product, time: now });
+    }
+
+    return product;
   }
 
   static async createProduct(
@@ -156,6 +229,7 @@ export class ProductService {
     description?: string,
     currency: string = 'PKR'
   ): Promise<ProductVariant> {
+    ProductService.invalidateCategoryCache();
     return prisma.productVariant.create({
       data: {
         productId,
@@ -170,13 +244,23 @@ export class ProductService {
   }
 
   static async getAvailableStockCount(variantId: string): Promise<number> {
-    return prisma.stockItem.count({
+    const now = Date.now();
+    const cached = stockCountCache.get(variantId);
+    if (cached && now - cached.time < 15000) {
+      return cached.count;
+    }
+
+    const count = await prisma.stockItem.count({
       where: {
         variantId,
         isSold: false,
         lockedAt: null,
       },
     });
+
+    stockCountCache.set(variantId, { count, time: now });
+    return count;
   }
 }
+
 

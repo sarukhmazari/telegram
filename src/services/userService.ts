@@ -197,9 +197,10 @@ export class UserService {
     amount: number,
     type: TransactionType,
     description: string,
-    referenceId?: string
+    referenceId?: string,
+    externalTx?: any
   ): Promise<User> {
-    const updatedUser = await prisma.$transaction(async (tx) => {
+    const execute = async (tx: any) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (!user) {
         throw new Error('User not found for balance update');
@@ -229,7 +230,11 @@ export class UserService {
       });
 
       return res;
-    });
+    };
+
+    const updatedUser = externalTx
+      ? await execute(externalTx)
+      : await prisma.$transaction(execute, { maxWait: 15000, timeout: 30000 });
 
     UserService.setCachedUser(updatedUser);
     logger.info('Updated user balance', { userId, amount, newBalance: updatedUser.balance, type });

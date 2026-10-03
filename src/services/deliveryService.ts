@@ -68,57 +68,60 @@ export class DeliveryService {
     const quantity = orderItem.quantity;
     const variantId = orderItem.variantId;
 
-    const deliveredItems = await prisma.$transaction(async (tx) => {
-      // Find available stock items
-      const stockItems = await tx.stockItem.findMany({
-        where: {
-          variantId,
-          isSold: false,
-          lockedAt: null,
-        },
-        take: quantity,
-      });
+    const deliveredItems = await prisma.$transaction(
+      async (tx) => {
+        // Find available stock items
+        const stockItems = await tx.stockItem.findMany({
+          where: {
+            variantId,
+            isSold: false,
+            lockedAt: null,
+          },
+          take: quantity,
+        });
 
-      if (stockItems.length < quantity) {
-        throw new Error(`Out of stock! Needed ${quantity}, found ${stockItems.length}`);
-      }
+        if (stockItems.length < quantity) {
+          throw new Error(`Out of stock! Needed ${quantity}, found ${stockItems.length}`);
+        }
 
-      const stockIds = stockItems.map((s) => s.id);
+        const stockIds = stockItems.map((s) => s.id);
 
-      // Lock and mark stock items as sold
-      await tx.stockItem.updateMany({
-        where: { id: { in: stockIds } },
-        data: {
-          isSold: true,
-          soldAt: new Date(),
-          orderId: order.id,
-        },
-      });
+        // Lock and mark stock items as sold
+        await tx.stockItem.updateMany({
+          where: { id: { in: stockIds } },
+          data: {
+            isSold: true,
+            soldAt: new Date(),
+            orderId: order.id,
+          },
+        });
 
-      const decryptedPayloads = stockItems.map((item) => ({
-        content: decryptData(item.content),
-        fileId: item.fileId,
-      }));
+        const decryptedPayloads = stockItems.map((item) => ({
+          content: decryptData(item.content),
+          fileId: item.fileId,
+        }));
 
-      const deliveryJson = JSON.stringify(decryptedPayloads);
+        const deliveryJson = JSON.stringify(decryptedPayloads);
 
-      await tx.order.update({
-        where: { id: order.id },
-        data: {
-          deliveryStatus: DeliveryStatus.DELIVERED,
-          orderStatus: OrderStatus.COMPLETED,
-          deliveryData: encryptData(deliveryJson),
-          deliveredFileId: stockItems[0]?.fileId || null,
-        },
-      });
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            deliveryStatus: DeliveryStatus.DELIVERED,
+            orderStatus: OrderStatus.COMPLETED,
+            deliveryData: encryptData(deliveryJson),
+            deliveredFileId: stockItems[0]?.fileId || null,
+          },
+        });
 
-      // Completely remove delivered credentials from database StockItem table
-      await tx.stockItem.deleteMany({
-        where: { id: { in: stockIds } },
-      });
+        // Completely remove delivered credentials from database StockItem table
+        await tx.stockItem.deleteMany({
+          where: { id: { in: stockIds } },
+        });
 
-      return decryptedPayloads;
-    });
+        return decryptedPayloads;
+      },
+      { maxWait: 15000, timeout: 30000 }
+    );
 
     logger.info('Automatic stock allocated and order delivered', {
       orderId: order.id,
