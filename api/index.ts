@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { bot } from '../src/bot/index.js';
-import { connectDatabase } from '../src/database/index.js';
+import { connectDatabase, prisma } from '../src/database/index.js';
 import { config, configError } from '../src/config/index.js';
 import { PaymentAccountService } from '../src/services/paymentAccountService.js';
 
@@ -19,7 +19,8 @@ export default async function handler(
 ) {
   // Helper for JSON response in serverless environments
   const sendJson = (statusCode: number, data: any) => {
-    if (res.status) {
+    if (res.writableEnded) return;
+    if (typeof res.status === 'function' && typeof res.json === 'function') {
       res.status(statusCode).json(data);
     } else {
       res.statusCode = statusCode;
@@ -28,8 +29,8 @@ export default async function handler(
     }
   };
 
-  if (req.method === 'GET') {
-    try {
+  try {
+    if (req.method === 'GET') {
       const urlObj = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
       const shouldSetWebhook = urlObj.searchParams.get('setWebhook') === 'true';
 
@@ -37,65 +38,82 @@ export default async function handler(
       const proto = req.headers['x-forwarded-proto'] || 'https';
       const autoWebhookUrl = `${proto}://${host}/api`;
 
-      let webhookAction = null;
-      if (shouldSetWebhook && host) {
-        await bot.telegram.setWebhook(autoWebhookUrl);
-        webhookAction = `Webhook successfully set to ${autoWebhookUrl}`;
+      let webhookAction: string | null = null;
+      let webhookInfo: any = null;
+      let dbCheck: any = 'checking...';
+
+      // Test database connection
+      try {
+        await connectDatabase();
+        await prisma.$queryRaw`SELECT 1`;
+        dbCheck = '✅ Database connected successfully';
+      } catch (dbErr: any) {
+        dbCheck = `❌ Database connection error: ${dbErr?.message || String(dbErr)}`;
       }
 
-      const webhookInfo: any = await bot.telegram.getWebhookInfo().catch((e) => ({ error: e.message }));
+      // Check / Set Webhook
+      const hasValidToken = Boolean(config.BOT_TOKEN && !config.BOT_TOKEN.startsWith('0000000000:'));
+      if (hasValidToken) {
+        try {
+          if (shouldSetWebhook && host) {
+            await bot.telegram.setWebhook(autoWebhookUrl);
+            webhookAction = `Webhook successfully registered to: ${autoWebhookUrl}`;
+          }
+          webhookInfo = await bot.telegram.getWebhookInfo();
+        } catch (botErr: any) {
+          webhookInfo = { error: botErr.message };
+        }
+      } else {
+        webhookInfo = { error: 'BOT_TOKEN is missing or not configured in Vercel environment variables' };
+      }
 
       return sendJson(200, {
-        status: 'ok',
-        store: config.STORE_NAME,
-        message: 'Telegram Digital Store Bot is running on Vercel!',
-        environmentCheck: configError
-          ? { error: 'Missing or invalid environment variables on Vercel', details: configError }
-          : 'Environment variables valid',
+        status: hasValidToken && !configError ? 'operational' : 'configuration_required',
+        store: config.STORE_NAME || 'Digital Store',
+        botTokenStatus: hasValidToken ? '✅ BOT_TOKEN configured' : '❌ BOT_TOKEN missing',
+        databaseStatus: dbCheck,
+        environmentValidation: configError
+          ? { status: 'Missing required environment variables', details: configError }
+          : '✅ All environment variables valid',
+        webhookStatus: webhookInfo,
         webhookAction,
-        currentWebhookInfo: webhookInfo,
         suggestedWebhookUrl: autoWebhookUrl,
         instructions: !webhookInfo?.url
-          ? `Visit this URL with ?setWebhook=true to connect Telegram to this Vercel domain.`
-          : 'Telegram webhook is active!',
+          ? `To connect Telegram webhook, visit: ${autoWebhookUrl}?setWebhook=true`
+          : 'Telegram webhook is active and receiving updates.',
         timestamp: new Date().toISOString(),
       });
-    } catch (err: any) {
-      return sendJson(500, { error: err.message });
     }
-  }
 
-  if (req.method === 'POST') {
-    try {
+    if (req.method === 'POST') {
       // 1. One-time cold-start initialization
       if (!isServerlessInitialized) {
-        await connectDatabase().catch((dbErr) => {
-          console.error('Database connection error in serverless handler:', dbErr);
-          throw dbErr;
-        });
-        await PaymentAccountService.seedDefaultIfEmpty().catch(() => {});
-        if (!bot.botInfo) {
-          try {
-            bot.botInfo = await bot.telegram.getMe();
-          } catch (meErr: any) {
-            console.warn('Unable to pre-fetch bot.botInfo on cold start:', meErr?.message);
+        try {
+          await connectDatabase();
+          await PaymentAccountService.seedDefaultIfEmpty().catch(() => {});
+          if (!bot.botInfo && config.BOT_TOKEN && !config.BOT_TOKEN.startsWith('0000000000:')) {
+            bot.botInfo = await bot.telegram.getMe().catch((meErr) => {
+              console.warn('Unable to pre-fetch bot.botInfo on cold start:', meErr?.message);
+              return undefined as any;
+            });
           }
+          isServerlessInitialized = true;
+        } catch (initErr) {
+          console.error('Cold-start initialization error:', initErr);
         }
-        isServerlessInitialized = true;
       }
 
-      // 3. Extract request body reliably (handles object, string, or raw stream)
+      // 2. Extract request body reliably (handles parsed object, string, or raw buffer stream)
       let body = req.body;
 
       if (typeof body === 'string') {
         try {
           body = JSON.parse(body);
         } catch {
-          // keep as raw string if JSON parsing fails
+          // Keep as raw string if JSON parsing fails
         }
       }
 
-      // If req.body is missing or empty object without update properties, read raw stream
       if (!body || (typeof body === 'object' && !('update_id' in body) && Object.keys(body).length === 0)) {
         try {
           const chunks: Buffer[] = [];
@@ -111,26 +129,28 @@ export default async function handler(
         }
       }
 
-      // 4. Process update if valid object
+      // 3. Process update if valid object
       if (body && typeof body === 'object' && ('update_id' in body || 'message' in body || 'callback_query' in body)) {
         await bot.handleUpdate(body, res);
       } else if (body && typeof body === 'object') {
-        // Fallback for custom or nested update structures
         await bot.handleUpdate(body, res);
       }
 
       if (!res.writableEnded) {
         return sendJson(200, { ok: true });
       }
-    } catch (err: any) {
-      console.error('Error handling Telegram webhook update:', err);
-      if (!res.writableEnded) {
-        return sendJson(500, { error: err?.message || 'Internal Server Error' });
-      }
+      return;
     }
-    return;
-  }
 
-  return sendJson(405, { error: 'Method not allowed' });
+    return sendJson(405, { error: 'Method not allowed' });
+  } catch (err: any) {
+    console.error('Unhandled error in serverless handler:', err);
+    return sendJson(200, {
+      ok: false,
+      error: err?.message || 'Server error occurred',
+      timestamp: new Date().toISOString(),
+    });
+  }
 }
+
 

@@ -25,9 +25,14 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 const systemProxy = process.env.HTTPS_PROXY || process.env.https_proxy;
 const agent = systemProxy ? new HttpsProxyAgent(systemProxy) : undefined;
 
-export const bot = new Telegraf<BotContext>(config.BOT_TOKEN, {
-  telegram: agent ? { agent } : undefined,
-});
+export const bot = new Telegraf<BotContext>(
+  config.BOT_TOKEN && config.BOT_TOKEN.length > 5
+    ? config.BOT_TOKEN
+    : '0000000000:AAANotConfiguredFallbackTokenXXXXXX',
+  {
+    telegram: agent ? { agent } : undefined,
+  }
+);
 
 import { adminComposer } from './admin/index.js';
 
@@ -871,7 +876,12 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 // Auto-start bot on execution only in standalone / non-serverless mode
-if (!process.env.VERCEL && !process.env.SERVERLESS) {
+if (
+  !process.env.VERCEL &&
+  !process.env.SERVERLESS &&
+  !process.env.AWS_LAMBDA_FUNCTION_NAME &&
+  process.env.NODE_ENV !== 'test'
+) {
   startBot().catch((err) => {
     logger.error('Fatal error during bot initialization', { err });
   });
