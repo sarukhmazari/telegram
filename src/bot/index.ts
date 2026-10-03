@@ -127,26 +127,58 @@ bot.command('help', async (ctx) => {
   });
 });
 
+// Universal message editor: seamlessly handles text messages, photo caption messages, and markdown fallbacks
+export async function safeEditMessage(ctx: BotContext, text: string, replyMarkup?: any) {
+  const markup = replyMarkup?.reply_markup || replyMarkup;
+  try {
+    if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
+      await ctx.editMessageCaption(text, {
+        parse_mode: 'Markdown',
+        reply_markup: markup,
+      });
+    } else {
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: markup,
+      });
+    }
+  } catch (err: any) {
+    const errStr = String(err?.message || err);
+    if (errStr.includes('message is not modified')) {
+      return;
+    }
+    try {
+      const plainText = text.replace(/[*_`\[\]]/g, '');
+      if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
+        await ctx.editMessageCaption(plainText, { reply_markup: markup });
+      } else {
+        await ctx.editMessageText(plainText, { reply_markup: markup });
+      }
+    } catch {
+      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: markup }).catch(() => {});
+    }
+  }
+}
+
 // /shop or Store button
 bot.action('menu_store', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const categories = await ProductService.getActiveCategories();
   if (categories.length === 0) {
     await ctx.reply('No active categories available at the moment.', getMainMenuKeyboard(ctx.isAdmin));
     return;
   }
 
-  await ctx.editMessageText('🛍 *Select a Product Category:*', {
-    parse_mode: 'Markdown',
-    reply_markup: getCategoriesKeyboard(categories).reply_markup,
-  }).catch((err) => {
-    if (!String(err).includes('message is not modified')) logger.warn('menu_store edit error', { err });
-  });
+  await safeEditMessage(
+    ctx,
+    '🛍 *Select a Product Category:*',
+    getCategoriesKeyboard(categories)
+  );
 });
 
 // Main menu callback
 bot.action('menu_main', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const userDisplay = ctx.from?.username
     ? `@${ctx.from.username}`
     : (ctx.from?.first_name || `User`);
@@ -155,29 +187,25 @@ bot.action('menu_main', async (ctx) => {
 
   const bannerPhotoId = await SettingService.getSetting('banner_photo_file_id');
 
-  if (bannerPhotoId) {
+  if (bannerPhotoId && ctx.callbackQuery?.message && !('photo' in ctx.callbackQuery.message)) {
     try {
-      await ctx.editMessageCaption(text, {
+      await ctx.replyWithPhoto(bannerPhotoId, {
+        caption: text,
         parse_mode: 'Markdown',
         reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
       });
       return;
     } catch {
-      // If message wasn't a photo message, edit message text fallback below
+      // Fallback to safeEditMessage below
     }
   }
 
-  await ctx.editMessageText(text, {
-    parse_mode: 'Markdown',
-    reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
-  }).catch((err) => {
-    if (!String(err).includes('message is not modified')) logger.warn('menu_main edit error', { err });
-  });
+  await safeEditMessage(ctx, text, getMainMenuKeyboard(ctx.isAdmin));
 });
 
 // Balance Menu
 bot.action('menu_balance', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   const balance = Number(user?.balance || 0).toFixed(2);
   const msg =
@@ -190,17 +218,12 @@ bot.action('menu_balance', async (ctx) => {
     [Markup.button.callback('🏠 Home', 'menu_main')],
   ]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup,
-  }).catch((err) => {
-    if (!String(err).includes('message is not modified')) logger.warn('menu_balance edit error', { err });
-  });
+  await safeEditMessage(ctx, msg, keyboard);
 });
 
 // Deposit / Top-up Balance Action
 bot.action('menu_deposit', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const supportUser = await SettingService.getSupportUsername();
   const supportStr = supportUser ? `@${supportUser}` : '_(No direct support handle set)_';
   const msg =
@@ -215,17 +238,12 @@ bot.action('menu_deposit', async (ctx) => {
     [Markup.button.callback('🏠 Home', 'menu_main')],
   ]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup,
-  }).catch((err) => {
-    if (!String(err).includes('message is not modified')) logger.warn('menu_deposit edit error', { err });
-  });
+  await safeEditMessage(ctx, msg, keyboard);
 });
 
 // Account Menu
 bot.action('menu_account', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;
 
@@ -238,29 +256,23 @@ bot.action('menu_account', async (ctx) => {
     `Share your referral link to earn rewards:\n` +
     `\`https://t.me/${ctx.botInfo?.username || 'Bot'}?start=${user.referralCode}\``;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
-  }).catch((err) => {
-    if (!String(err).includes('message is not modified')) logger.warn('menu_account edit error', { err });
-  });
+  await safeEditMessage(ctx, msg, getMainMenuKeyboard(ctx.isAdmin));
 });
 
 // My Orders Menu
 bot.action('menu_orders', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;
 
   const orders = await OrderService.getUserOrders(user.id);
   
   if (orders.length === 0) {
-    await ctx.editMessageText('📦 *Your Order History*\n\nYou have no past orders yet.', {
-      parse_mode: 'Markdown',
-      reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
-    }).catch((err) => {
-      if (!String(err).includes('message is not modified')) logger.warn('menu_orders edit error', { err });
-    });
+    await safeEditMessage(
+      ctx,
+      '📦 *Your Order History*\n\nYou have no past orders yet.',
+      getMainMenuKeyboard(ctx.isAdmin)
+    );
     return;
   }
 
@@ -272,17 +284,12 @@ bot.action('menu_orders', async (ctx) => {
   });
   buttons.push([Markup.button.callback('🏠 Home', 'menu_main')]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-  }).catch((err) => {
-    if (!String(err).includes('message is not modified')) logger.warn('menu_orders edit error', { err });
-  });
+  await safeEditMessage(ctx, msg, Markup.inlineKeyboard(buttons));
 });
 
 // View Order Details & Purchased Credentials
 bot.action(/^view_order_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const orderId = ctx.match[1];
   const order = await OrderService.getOrderById(orderId);
   if (!order) {
@@ -319,29 +326,19 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
     [Markup.button.callback('⬅️ Back to Orders', 'menu_orders'), Markup.button.callback('🏠 Home', 'menu_main')],
   ]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup,
-  }).catch(() => {
-    ctx.reply(msg, { parse_mode: 'Markdown', reply_markup: keyboard.reply_markup }).catch(() => {});
-  });
+  await safeEditMessage(ctx, msg, keyboard);
 });
 
 // Promotions Menu
 bot.action('menu_promotions', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const msg = `🎁 *Active Store Promotions*\n\nNo active promotions available at the moment. Check back soon for discounts!`;
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
-  }).catch((err) => {
-    if (!String(err).includes('message is not modified')) logger.warn('menu_promotions edit error', { err });
-  });
+  await safeEditMessage(ctx, msg, getMainMenuKeyboard(ctx.isAdmin));
 });
 
 // Support Menu
 bot.action('menu_support', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const helpText =
     `❓ *Store Help & Support*\n\n` +
     `Need assistance with an order, wallet balance, or product inquiry?\n\n` +
@@ -353,17 +350,12 @@ bot.action('menu_support', async (ctx) => {
     [Markup.button.callback('🏠 Home', 'menu_main')],
   ]);
 
-  await ctx.editMessageText(helpText, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup,
-  }).catch((err) => {
-    if (!String(err).includes('message is not modified')) logger.warn('menu_support edit error', { err });
-  });
+  await safeEditMessage(ctx, helpText, keyboard);
 });
 
 // Category Click — Show Product Details with Live Price & Live Stock Count
 bot.action(/^cat_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const categoryId = ctx.match[1];
   const category = await ProductService.getCategoryWithDetails(categoryId);
   if (!category) {
@@ -389,10 +381,7 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
       ],
     ]);
 
-    await ctx.editMessageText(msg, {
-      parse_mode: 'Markdown',
-      reply_markup: keyboard.reply_markup,
-    }).catch(() => {});
+    await safeEditMessage(ctx, msg, keyboard);
     return;
   }
 
@@ -431,15 +420,12 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
     ],
   ]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup,
-  }).catch(() => {});
+  await safeEditMessage(ctx, msg, keyboard);
 });
 
 // Product Click — Show Details
 bot.action(/^prod_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const productId = ctx.match[1];
   const product = await ProductService.getProductById(productId);
   if (!product) {
@@ -478,10 +464,7 @@ bot.action(/^prod_(.+)$/, async (ctx) => {
     ],
   ]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup,
-  }).catch(() => {});
+  await safeEditMessage(ctx, msg, keyboard);
 });
 
 // Buy zero item click handler
@@ -491,7 +474,7 @@ bot.action('buy_zero_item', async (ctx) => {
 
 // 🛒 Buy Variant Click — Create Order & Show Payment Selection
 bot.action(/^buy_var_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const variantId = ctx.match[1];
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;
@@ -523,10 +506,10 @@ bot.action(/^buy_var_(.+)$/, async (ctx) => {
 
 // Quantity selection — Create Order with chosen quantity
 bot.action(/^select_qty_(.+)_(\d+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const matchedVariantId = ctx.match[1];
-const quantity = Number(ctx.match[2]);
-const variantId = ctx.session?.pendingVariantId || matchedVariantId;
+  const quantity = Number(ctx.match[2]);
+  const variantId = ctx.session?.pendingVariantId || matchedVariantId;
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;
 
@@ -578,15 +561,12 @@ const variantId = ctx.session?.pendingVariantId || matchedVariantId;
     Markup.button.callback('🏠 Home', 'menu_main'),
   ]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard(paymentButtons).reply_markup,
-  });
+  await safeEditMessage(ctx, msg, Markup.inlineKeyboard(paymentButtons));
 });
 
 // 📱 Pay via Dynamic Payment Account — Show Payment Instructions
 bot.action(/^pay_acc_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const accountId = ctx.match[1];
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;
@@ -630,15 +610,12 @@ bot.action(/^pay_acc_(.+)$/, async (ctx) => {
 
   const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'menu_main')]]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup,
-  });
+  await safeEditMessage(ctx, msg, keyboard);
 });
 
 // Legacy handler support
 bot.action(/^pay_method_acc_(.+)_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const accountId = ctx.match[1];
   const orderId = ctx.match[2];
 
@@ -680,15 +657,12 @@ bot.action(/^pay_method_acc_(.+)_(.+)$/, async (ctx) => {
 
   const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'menu_main')]]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup,
-  });
+  await safeEditMessage(ctx, msg, keyboard);
 });
 
 // 📱 Legacy / Direct Pay via JazzCash fallback
 bot.action(/^pay_method_jazzcash_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const orderId = ctx.match[1];
   const order = await OrderService.getOrderById(orderId);
   if (!order) {
@@ -720,15 +694,12 @@ bot.action(/^pay_method_jazzcash_(.+)$/, async (ctx) => {
 
   const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'menu_main')]]);
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard.reply_markup,
-  });
+  await safeEditMessage(ctx, msg, keyboard);
 });
 
 // 💰 Pay via Wallet Balance
 bot.action(/^pay_method_wallet_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
+  ctx.answerCbQuery().catch(() => {});
   const orderId = ctx.match[1];
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
   if (!user) return;

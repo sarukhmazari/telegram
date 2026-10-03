@@ -62,18 +62,28 @@ export class ManualPaymentProvider implements IPaymentProvider {
 
     const newStatus = approve ? PaymentStatus.PAID : PaymentStatus.REJECTED;
 
-    const updatedPayment = await prisma.payment.update({
-      where: { id: paymentId },
-      data: {
+    if (payment.status === newStatus) {
+      return {
+        isVerified: approve,
         status: newStatus,
-        adminNotes,
-      },
-    });
+        transactionReference: payment.transactionReference || undefined,
+        adminNotes: adminNotes || undefined,
+      };
+    }
 
-    await prisma.order.update({
-      where: { id: payment.orderId },
-      data: { paymentStatus: newStatus },
-    });
+    const [updatedPayment] = await prisma.$transaction([
+      prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: newStatus,
+          adminNotes,
+        },
+      }),
+      prisma.order.update({
+        where: { id: payment.orderId },
+        data: { paymentStatus: newStatus },
+      }),
+    ]);
 
     logger.info('Manual payment verification completed', { paymentId, approved: approve });
 

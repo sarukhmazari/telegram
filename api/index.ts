@@ -11,12 +11,18 @@ if (typeof (BigInt.prototype as any).toJSON !== 'function') {
   };
 }
 
+// Disable automatic webhookReply so Telegraf does not prematurely close the HTTP response
+// before database transactions, Telegram API messages, or delivery completions finish.
+bot.telegram.webhookReply = false;
+
 let isServerlessInitialized = false;
 
 export default async function handler(
   req: IncomingMessage & { body?: any; query?: any; method?: string },
   res: ServerResponse & { status?: (code: number) => any; json?: (data: any) => any; send?: (data: any) => any }
 ) {
+  const startTime = Date.now();
+
   // Helper for JSON response in serverless environments
   const sendJson = (statusCode: number, data: any) => {
     if (res.writableEnded) return;
@@ -81,6 +87,7 @@ export default async function handler(
         instructions: !webhookInfo?.url
           ? `To connect Telegram webhook, visit: ${autoWebhookUrl}?setWebhook=true`
           : 'Telegram webhook is active and receiving updates.',
+        responseTimeMs: Date.now() - startTime,
         timestamp: new Date().toISOString(),
       });
     }
@@ -129,17 +136,18 @@ export default async function handler(
         }
       }
 
-      // 3. Process update if valid object
-      if (body && typeof body === 'object' && ('update_id' in body || 'message' in body || 'callback_query' in body)) {
-        await bot.handleUpdate(body, res);
-      } else if (body && typeof body === 'object') {
-        await bot.handleUpdate(body, res);
+      // 3. Process update directly without passing response to avoid early teardown
+      if (body && typeof body === 'object') {
+        const updateType = body.callback_query ? `callback:${body.callback_query.data}` : body.message ? 'message' : 'other';
+        const updateStart = Date.now();
+        await bot.handleUpdate(body);
+        const duration = Date.now() - updateStart;
+        if (duration > 500) {
+          console.log(`⏱️ Update [${updateType}] processed in ${duration}ms`);
+        }
       }
 
-      if (!res.writableEnded) {
-        return sendJson(200, { ok: true });
-      }
-      return;
+      return sendJson(200, { ok: true });
     }
 
     return sendJson(405, { error: 'Method not allowed' });

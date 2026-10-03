@@ -214,13 +214,7 @@ adminComposer.action(/^admin_approve_pay_(.+)$/, async (ctx) => {
   const paymentId = ctx.match[1];
   
   // Instant tactile feedback to Telegram app (stops spinner immediately in < 1ms)
-  await ctx.answerCbQuery().catch(() => {});
-
-  // Immediately remove action buttons and show in-progress status to avoid duplicate clicks
-  await safeEditAdminMessage(
-    ctx,
-    '⏳ *Processing Payment Approval & Digital Delivery...*\n\nPlease wait a moment.'
-  );
+  ctx.answerCbQuery('⏳ Processing approval...').catch(() => {});
 
   try {
     const result = await AdminService.approvePayment(paymentId, 'Approved by Admin', ctx as any);
@@ -269,13 +263,7 @@ adminComposer.action(/^admin_reject_pay_(.+)$/, async (ctx) => {
   const paymentId = ctx.match[1];
   
   // Instant tactile feedback to Telegram app (stops spinner immediately in < 1ms)
-  await ctx.answerCbQuery().catch(() => {});
-
-  // Immediately remove action buttons and show in-progress status to avoid duplicate clicks
-  await safeEditAdminMessage(
-    ctx,
-    '⏳ *Rejecting Payment & Notifying Customer...*\n\nPlease wait a moment.'
-  );
+  ctx.answerCbQuery('⏳ Processing rejection...').catch(() => {});
 
   try {
     const result = await AdminService.rejectPayment(paymentId, 'Rejected by Admin', ctx as any);

@@ -179,6 +179,7 @@ model ProductVariant {
 
   @@index([productId])
   @@index([deliveryType])
+  @@index([productId, isEnabled])
 }
 
 model StockItem {
@@ -202,6 +203,7 @@ model StockItem {
   @@index([variantId])
   @@index([isSold])
   @@index([orderId])
+  @@index([variantId, isSold, lockedAt])
 }
 
 model Cart {
