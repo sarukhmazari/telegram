@@ -33,7 +33,8 @@ export const authMiddleware: MiddlewareFn<BotContext> = async (ctx, next) => {
     }
 
     ctx.dbUser = dbUser;
-    const isRootAdmin = config.ADMIN_IDS.includes(ctx.from.id.toString());
+    const fromIdStr = ctx.from.id.toString();
+    const isRootAdmin = Array.isArray(config.ADMIN_IDS) && config.ADMIN_IDS.some((id: string) => id.trim() === fromIdStr);
     ctx.isAdmin = dbUser.role === Role.ADMIN || dbUser.role === Role.OWNER || isRootAdmin;
     ctx.isOwner = dbUser.role === Role.OWNER || isRootAdmin;
 
@@ -63,7 +64,7 @@ export const adminGuard: MiddlewareFn<BotContext> = async (ctx, next) => {
     }
   }
 
-  // Check if update is an explicit admin action (callback starting with admin_)
+  // Check if update is an explicit admin action (callback starting with admin_ or /admin, /panel command)
   const isCbDataAdmin = Boolean(
     ctx.callbackQuery &&
       'data' in ctx.callbackQuery &&
@@ -71,11 +72,17 @@ export const adminGuard: MiddlewareFn<BotContext> = async (ctx, next) => {
       (ctx.callbackQuery as any).data.startsWith('admin_')
   );
 
-  if (isCbDataAdmin) {
+  const isCommandAdmin = Boolean(
+    ctx.message &&
+      'text' in ctx.message &&
+      (ctx.message.text.startsWith('/admin') || ctx.message.text.startsWith('/panel'))
+  );
+
+  if (isCbDataAdmin || isCommandAdmin) {
     if (ctx.callbackQuery) {
       await ctx.answerCbQuery('⛔ Unauthorized: Admin access required.', { show_alert: true }).catch(() => {});
     } else {
-      await ctx.reply('⛔ Unauthorized: Admin access required.');
+      await ctx.reply('⛔ Unauthorized: Admin access required.').catch(() => {});
     }
     return;
   }

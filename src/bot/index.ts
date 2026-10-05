@@ -127,21 +127,46 @@ bot.command('help', async (ctx) => {
   });
 });
 
-// Universal message editor: seamlessly handles text messages, photo caption messages, and markdown fallbacks
+// Universal message editor: seamlessly handles text messages, photo caption messages, caption length limits, and markdown fallbacks
 export async function safeEditMessage(ctx: BotContext, text: string, replyMarkup?: any) {
   const markup = replyMarkup?.reply_markup || replyMarkup;
-  try {
-    if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
-      await ctx.editMessageCaption(text, {
-        parse_mode: 'Markdown',
-        reply_markup: markup,
-      });
-    } else {
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: markup,
-      });
+  const isPhotoMessage = Boolean(ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message);
+
+  if (isPhotoMessage) {
+    if (text.length <= 1000) {
+      try {
+        await ctx.editMessageCaption(text, {
+          parse_mode: 'Markdown',
+          reply_markup: markup,
+        });
+        return;
+      } catch (err: any) {
+        if (String(err?.message || err).includes('message is not modified')) return;
+      }
     }
+    // Caption too long (>1024) or caption editing failed -> delete photo message and send clean text reply
+    try {
+      await ctx.deleteMessage().catch(() => {});
+    } catch {}
+    try {
+      await ctx.reply(text, {
+        parse_mode: 'Markdown',
+        reply_markup: markup,
+      });
+    } catch {
+      await ctx.reply(text.replace(/[*_`\[\]]/g, ''), {
+        reply_markup: markup,
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  // Regular text message
+  try {
+    await ctx.editMessageText(text, {
+      parse_mode: 'Markdown',
+      reply_markup: markup,
+    });
   } catch (err: any) {
     const errStr = String(err?.message || err);
     if (errStr.includes('message is not modified')) {
@@ -149,13 +174,17 @@ export async function safeEditMessage(ctx: BotContext, text: string, replyMarkup
     }
     try {
       const plainText = text.replace(/[*_`\[\]]/g, '');
-      if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
-        await ctx.editMessageCaption(plainText, { reply_markup: markup });
-      } else {
-        await ctx.editMessageText(plainText, { reply_markup: markup });
-      }
+      await ctx.editMessageText(plainText, { reply_markup: markup });
     } catch {
-      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: markup }).catch(() => {});
+      try {
+        await ctx.deleteMessage().catch(() => {});
+      } catch {}
+      await ctx.reply(text, {
+        parse_mode: 'Markdown',
+        reply_markup: markup,
+      }).catch(async () => {
+        await ctx.reply(text.replace(/[*_`\[\]]/g, ''), { reply_markup: markup }).catch(() => {});
+      });
     }
   }
 }

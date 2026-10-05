@@ -28,6 +28,81 @@ export const adminComposer = new Composer<BotContext>();
 // Apply admin auth guard to all routes in this composer
 adminComposer.use(adminGuard);
 
+// Universal helper to safely edit admin messages (supports photo captions, regular text, caption length limits, and markdown fallbacks)
+export async function safeEditAdminMessage(ctx: BotContext, text: string, replyMarkup?: any) {
+  const markup = replyMarkup?.reply_markup || replyMarkup;
+  const isPhotoMessage = Boolean(ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message);
+
+  if (isPhotoMessage) {
+    if (text.length <= 1000) {
+      try {
+        await ctx.editMessageCaption(text, {
+          parse_mode: 'Markdown',
+          reply_markup: markup,
+        });
+        return;
+      } catch (err: any) {
+        if (String(err?.message || err).includes('message is not modified')) return;
+      }
+    }
+    // Caption too long (>1024) or caption editing failed -> delete photo message and send clean text reply
+    try {
+      await ctx.deleteMessage().catch(() => {});
+    } catch {}
+    try {
+      await ctx.reply(text, {
+        parse_mode: 'Markdown',
+        reply_markup: markup,
+      });
+    } catch {
+      await ctx.reply(text.replace(/[*_`\[\]]/g, ''), {
+        reply_markup: markup,
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  // Regular text message
+  try {
+    await ctx.editMessageText(text, {
+      parse_mode: 'Markdown',
+      reply_markup: markup,
+    });
+  } catch (err: any) {
+    const errStr = String(err?.message || err);
+    if (errStr.includes('message is not modified')) {
+      return;
+    }
+    try {
+      const plainText = text.replace(/[*_`\[\]]/g, '');
+      await ctx.editMessageText(plainText, { reply_markup: markup });
+    } catch {
+      try {
+        await ctx.deleteMessage().catch(() => {});
+      } catch {}
+      await ctx.reply(text, {
+        parse_mode: 'Markdown',
+        reply_markup: markup,
+      }).catch(async () => {
+        await ctx.reply(text.replace(/[*_`\[\]]/g, ''), { reply_markup: markup }).catch(() => {});
+      });
+    }
+  }
+}
+
+// ⚙️ /admin and /panel Commands for direct admin entry
+adminComposer.command(['admin', 'panel'], async (ctx) => {
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+  const msg = `⚙️ *Store Admin Panel*\n\nSelect a management option below:`;
+  await ctx.reply(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: getAdminMainKeyboard().reply_markup,
+  });
+});
+
 // ⚙️ Admin Main Menu
 adminComposer.action('admin_main', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
@@ -36,10 +111,7 @@ adminComposer.action('admin_main', async (ctx) => {
     ctx.session.adminData = undefined;
   }
   const msg = `⚙️ *Store Admin Panel*\n\nSelect a management option below:`;
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getAdminMainKeyboard().reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getAdminMainKeyboard());
 });
 
 // 📊 Dashboard Metrics
@@ -58,10 +130,7 @@ adminComposer.action('admin_dashboard', async (ctx) => {
     `📦 *Pending Deliveries*: ${metrics.pendingDeliveries}\n` +
     `⚠️ *Low Stock Items*: ${metrics.lowStockItemsCount}`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getAdminMainKeyboard().reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getAdminMainKeyboard());
 });
 
 // 📦 Products Management Screen
@@ -69,10 +138,7 @@ adminComposer.action('admin_products', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const categories = await ProductService.getAllCategories();
   const msg = `📦 *Product Management*\n\nYou can add new products in real-time or view current inventory.\nTotal Active Categories: ${categories.length}`;
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getAdminProductsKeyboard().reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getAdminProductsKeyboard());
 });
 
 // 🗂 Categories Management Screen
@@ -84,10 +150,7 @@ adminComposer.action('admin_categories', async (ctx) => {
     text += `• ${c.name}\n`;
   });
 
-  await ctx.editMessageText(text, {
-    parse_mode: 'Markdown',
-    reply_markup: getAdminCategoriesKeyboard().reply_markup,
-  });
+  await safeEditAdminMessage(ctx, text, getAdminCategoriesKeyboard());
 });
 
 // ➕ Add New Category Action
@@ -96,10 +159,11 @@ adminComposer.action('admin_add_category', async (ctx) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_CATEGORY_NAME';
 
-  await ctx.editMessageText('➕ *Add New Store Category*\n\nPlease reply with the category name (e.g., `🍿 Disney+` or `🎮 PlayStation`):', {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]]).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    '➕ *Add New Store Category*\n\nPlease reply with the category name (e.g., `🍿 Disney+` or `🎮 PlayStation`):',
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]])
+  );
 });
 
 // ➕ Add New Product Action — Step 1: Select Category
@@ -116,10 +180,11 @@ adminComposer.action('admin_add_product', async (ctx) => {
   ]);
   buttons.push([Markup.button.callback('❌ Cancel', 'admin_main')]);
 
-  await ctx.editMessageText('➕ *Add New Product (Step 1/3)*\n\nSelect the category for the new product:', {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    '➕ *Add New Product (Step 1/3)*\n\nSelect the category for the new product:',
+    Markup.inlineKeyboard(buttons)
+  );
 });
 
 // ➕ Add New Product — Step 2: Category Selected -> Ask Product Name
@@ -137,12 +202,10 @@ adminComposer.action(/^admin_select_cat_(.+)$/, async (ctx) => {
   ctx.session.adminState = 'AWAITING_PRODUCT_NAME';
   ctx.session.adminData = { categoryId, categoryName: category.name };
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `➕ *Add New Product to ${category.name} (Step 2/3)*\n\nPlease reply with the *Product Name* (e.g. \`ChatGPT Plus 1 Month Private Account\`):`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]]).reply_markup,
-    }
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]])
   );
 });
 
@@ -157,10 +220,11 @@ adminComposer.action('admin_payments', async (ctx) => {
   });
 
   if (pendingPayments.length === 0) {
-    await ctx.editMessageText('💳 *Payment Reviews*\n\nNo pending manual payment verification requests.', {
-      parse_mode: 'Markdown',
-      reply_markup: getAdminMainKeyboard().reply_markup,
-    });
+    await safeEditAdminMessage(
+      ctx,
+      '💳 *Payment Reviews*\n\nNo pending manual payment verification requests.',
+      getAdminMainKeyboard()
+    );
     return;
   }
 
@@ -172,42 +236,8 @@ adminComposer.action('admin_payments', async (ctx) => {
     `Amount: *Rs. ${Number(payment.amount).toFixed(2)} ${payment.currency}*\n` +
     `Reference: \`${payment.transactionReference || 'None'}\``;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getPaymentReviewKeyboard(payment.id).reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getPaymentReviewKeyboard(payment.id));
 });
-
-// Helper to safely edit admin messages (supports photo captions and text messages)
-async function safeEditAdminMessage(ctx: BotContext, text: string, replyMarkup?: any) {
-  const markup = replyMarkup?.reply_markup || replyMarkup;
-  try {
-    if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
-      await ctx.editMessageCaption(text, {
-        parse_mode: 'Markdown',
-        reply_markup: markup,
-      });
-    } else {
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: markup,
-      });
-    }
-  } catch (err: any) {
-    if (!String(err).includes('message is not modified')) {
-      try {
-        const plainText = text.replace(/[*_`\[\]]/g, '');
-        if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
-          await ctx.editMessageCaption(plainText, { reply_markup: markup });
-        } else {
-          await ctx.editMessageText(plainText, { reply_markup: markup });
-        }
-      } catch {
-        await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: markup }).catch(() => {});
-      }
-    }
-  }
-}
 
 // ✅ Approve Payment
 adminComposer.action(/^admin_approve_pay_(.+)$/, async (ctx) => {
@@ -313,10 +343,11 @@ adminComposer.action('admin_stock', async (ctx) => {
   });
 
   if (variants.length === 0) {
-    await ctx.editMessageText('📦 *Stock Management*\n\nNo product variants available. Please create a product first!', {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]]).reply_markup,
-    });
+    await safeEditAdminMessage(
+      ctx,
+      '📦 *Stock Management*\n\nNo product variants available. Please create a product first!',
+      Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+    );
     return;
   }
 
@@ -334,10 +365,7 @@ adminComposer.action('admin_stock', async (ctx) => {
 
   buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
 
-  await ctx.editMessageText(text, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-  });
+  await safeEditAdminMessage(ctx, text, Markup.inlineKeyboard(buttons));
 });
 
 // 📋 Orders Management Screen
@@ -353,10 +381,11 @@ adminComposer.action('admin_orders', async (ctx) => {
     `• Pending Orders: *${pendingOrders}*\n` +
     `• Completed Orders: *${completedOrders}*`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]]).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+  );
 });
 
 // 👥 Users Management Screen
@@ -370,10 +399,11 @@ adminComposer.action('admin_users', async (ctx) => {
     `• Total Registered Customers: *${totalUsers}*\n` +
     `• Suspended/Banned Accounts: *${bannedUsers}*`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]]).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+  );
 });
 
 // 🎟 Coupons Screen
@@ -386,10 +416,11 @@ adminComposer.action('admin_coupons', async (ctx) => {
     text += `• \`${c.code}\` — ${c.discountType === 'PERCENTAGE' ? c.discountValue + '%' : '$' + c.discountValue}\n`;
   });
 
-  await ctx.editMessageText(text, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]]).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    text,
+    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+  );
 });
 
 // 📢 Broadcast Screen — Prompt Admin for Broadcast Text/Photo
@@ -406,10 +437,11 @@ adminComposer.action('admin_broadcast', async (ctx) => {
     `Please reply directly to this chat with your *announcement text* or *photo with caption* to send to all registered bot users.\n\n` +
     `_(Supports Markdown formatting like *bold*, _italic_, and line breaks)_`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]]).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]])
+  );
 });
 
 // 🚀 Confirm & Dispatch Broadcast Action
@@ -439,18 +471,7 @@ adminComposer.action('admin_confirm_broadcast', async (ctx) => {
     `⚡ Messages are being delivered in the background.`;
 
   const keyboard = Markup.inlineKeyboard([[Markup.button.callback('⚙️ Admin Panel', 'admin_main')]]);
-
-  if (ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message) {
-    await ctx.editMessageCaption(confirmMsg, {
-      parse_mode: 'Markdown',
-      reply_markup: keyboard.reply_markup,
-    }).catch(() => {});
-  } else {
-    await ctx.editMessageText(confirmMsg, {
-      parse_mode: 'Markdown',
-      reply_markup: keyboard.reply_markup,
-    }).catch(() => {});
-  }
+  await safeEditAdminMessage(ctx, confirmMsg, keyboard);
 });
 
 // ⭐ Reviews Screen
@@ -458,10 +479,11 @@ adminComposer.action('admin_reviews', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const totalReviews = await prisma.review.count();
   const msg = `⭐ *Customer Reviews Moderation*\n\nTotal Product Reviews: *${totalReviews}*`;
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]]).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+  );
 });
 
 // 📥 Select Variant for Stock Upload — Step 1: Ask for Price
@@ -488,10 +510,11 @@ adminComposer.action(/^admin_add_stock_(.+)$/, async (ctx) => {
     `Reply with the *new price in PKR* to update it, or type \`skip\` to keep the current price.\n\n` +
     `Example: \`1500\` or \`skip\``;
 
-  await ctx.editMessageText(promptText, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_stock')]]).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    promptText,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_stock')]])
+  );
 });
 
 // 🗑 Delete Stock — Select Variant
@@ -530,12 +553,10 @@ adminComposer.action(/^admin_delete_stock_variant_(.+)$/, async (ctx) => {
   ]);
   buttons.push([Markup.button.callback('⬅️ Back to Stock', 'admin_stock')]);
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `🗑 *Delete Stock — ${variant.product.name}*\n\nShowing up to 20 unsold items. Tap one to delete it permanently:`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-    }
+    Markup.inlineKeyboard(buttons)
   );
 });
 
@@ -564,15 +585,13 @@ adminComposer.action(/^admin_delete_stock_item_(.+)$/, async (ctx) => {
   const remaining = await ProductService.getAvailableStockCount(item.variantId);
 
   await ctx.answerCbQuery('✅ Stock item deleted successfully.', { show_alert: true }).catch(() => {});
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `✅ *Stock item deleted.*\n\n📦 *Product:* ${item.variant.product.name}\n📊 *Remaining Stock:* ${remaining} items`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
-        [Markup.button.callback('🗑 Delete More', `admin_delete_stock_variant_${item.variantId}`)],
-        [Markup.button.callback('📦 Stock Management', 'admin_stock')],
-      ]).reply_markup,
-    }
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🗑 Delete More', `admin_delete_stock_variant_${item.variantId}`)],
+      [Markup.button.callback('📦 Stock Management', 'admin_stock')],
+    ])
   );
 });
 
@@ -610,10 +629,11 @@ adminComposer.action(/^admin_assign_stock_(.+)$/, async (ctx) => {
     `⚠️ *Duplicates Skipped:* ${result.duplicateCount}\n` +
     `📊 *Total Live Stock:* ${availableStock} items available`;
 
-  await ctx.editMessageText(summaryMsg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📦 Stock Management', 'admin_stock')]]).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    summaryMsg,
+    Markup.inlineKeyboard([[Markup.button.callback('📦 Stock Management', 'admin_stock')]])
+  );
 });
 
 // 🤖 Bot Settings Screen
@@ -643,10 +663,7 @@ adminComposer.action('admin_bot_settings', async (ctx) => {
     `• *Support Handle:* ${supportStr}\n\n` +
     `Select a setting below to update:`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getBotSettingsKeyboard().reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getBotSettingsKeyboard());
 });
 
 // 📛 Change Bot Name — Prompt
@@ -655,12 +672,10 @@ adminComposer.action('admin_change_name', async (ctx) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_BOT_NAME';
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `📛 *Change Bot Name*\n\nReply with the new display name for the bot (e.g. \`MazariShop 🛒\`).\n\n_Max 64 characters._`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]]).reply_markup,
-    }
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]])
   );
 });
 
@@ -670,12 +685,10 @@ adminComposer.action('admin_change_description', async (ctx) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_BOT_DESCRIPTION';
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `📝 *Change Bot Description*\n\nThis text is shown on the empty chat screen when a user opens the bot for the first time.\n\nReply with the new description.\n\n_Max 512 characters._`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]]).reply_markup,
-    }
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]])
   );
 });
 
@@ -685,12 +698,10 @@ adminComposer.action('admin_change_short_desc', async (ctx) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_BOT_SHORT_DESC';
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `💬 *Change Bot Bio / About*\n\nThis is the **Bio** shown on your bot's profile page and in search/share previews.\n\nReply with the new bio (or type \`clear\` to remove).\n\n_Max 120 characters._`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]]).reply_markup,
-    }
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]])
   );
 });
 
@@ -709,30 +720,29 @@ adminComposer.action('admin_change_support', async (ctx) => {
     `Reply with the Telegram username for customer support (e.g. \`@zoxer19\` or \`zoxer19\`).\n\n` +
     `_To remove/delete the support handle, press "Clear Support Handle" below._`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([
       [Markup.button.callback('🗑 Clear Support Handle', 'admin_clear_support')],
       [Markup.button.callback('❌ Cancel', 'admin_bot_settings')],
-    ]).reply_markup,
-  });
+    ])
+  );
 });
 
 // 🗑 Clear Support Handle
 adminComposer.action('admin_clear_support', async (ctx) => {
   await ctx.answerCbQuery('✅ Support handle removed!', { show_alert: true }).catch(() => {});
   await SettingService.setSetting('support_username', '__NONE__');
-  await ctx.editMessageText('✅ *Store Support Handle Removed!*', {
-    parse_mode: 'Markdown',
-    reply_markup: getBotSettingsKeyboard().reply_markup,
-  });
+  await safeEditAdminMessage(ctx, '✅ *Store Support Handle Removed!*', getBotSettingsKeyboard());
 });
 
 // 👤 Change Bot Profile Photo — Info (Telegram API limitation)
 adminComposer.action('admin_change_photo', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const me = await ctx.telegram.getMe().catch(() => ({ username: 'your bot' }));
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `👤 *Change Bot Profile Avatar Photo*\n\n` +
     `⚠️ *Telegram platform rules require bot profile avatars to be set via BotFather.*\n\n` +
     `*Follow these steps to update your avatar:* \n\n` +
@@ -740,13 +750,10 @@ adminComposer.action('admin_change_photo', async (ctx) => {
     `2️⃣ Send \`/setuserpic\`\n` +
     `3️⃣ Select your bot (@${me.username})\n` +
     `4️⃣ Upload your new profile picture!`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
-        [Markup.button.url('📲 Open @BotFather in Telegram', 'https://t.me/BotFather')],
-        [Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')],
-      ]).reply_markup,
-    }
+    Markup.inlineKeyboard([
+      [Markup.button.url('📲 Open @BotFather in Telegram', 'https://t.me/BotFather')],
+      [Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')],
+    ])
   );
 });
 
@@ -754,7 +761,8 @@ adminComposer.action('admin_change_photo', async (ctx) => {
 adminComposer.action('admin_change_desc_photo', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const me = await ctx.telegram.getMe().catch(() => ({ username: 'your bot' }));
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `🖼 *Change Bot Intro / Description Banner Photo*\n\n` +
     `The picture displayed above *"What can this bot do?"* on the initial chat screen is managed directly by Telegram's BotFather.\n\n` +
     `*Follow these quick steps to update it:* \n\n` +
@@ -763,13 +771,10 @@ adminComposer.action('admin_change_desc_photo', async (ctx) => {
     `3️⃣ Select your bot (@${me.username})\n` +
     `4️⃣ Send/upload your new banner photo!\n\n` +
     `💡 _Note: If you want to change the welcome image sent inside the store menu, use "Change In-Chat Store Banner" in Bot Settings._`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
-        [Markup.button.url('📲 Open @BotFather in Telegram', 'https://t.me/BotFather')],
-        [Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')],
-      ]).reply_markup,
-    }
+    Markup.inlineKeyboard([
+      [Markup.button.url('📲 Open @BotFather in Telegram', 'https://t.me/BotFather')],
+      [Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')],
+    ])
   );
 });
 
@@ -788,23 +793,25 @@ adminComposer.action('admin_change_banner', async (ctx) => {
     `Send/upload an image photo to set or replace the Store Banner image shown when customers open the store main menu.\n\n` +
     `_To remove the banner photo, press "Clear Banner" below._`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([
       [Markup.button.callback('🗑 Clear Banner', 'admin_clear_banner')],
       [Markup.button.callback('❌ Cancel', 'admin_bot_settings')],
-    ]).reply_markup,
-  });
+    ])
+  );
 });
 
 // 🗑 Clear Store Banner Photo
 adminComposer.action('admin_clear_banner', async (ctx) => {
   await ctx.answerCbQuery('✅ Banner photo removed!', { show_alert: true }).catch(() => {});
   await SettingService.deleteSetting('banner_photo_file_id');
-  await ctx.editMessageText('✅ *Store Welcome Banner Photo Removed!*', {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')]]).reply_markup,
-  });
+  await safeEditAdminMessage(
+    ctx,
+    '✅ *Store Welcome Banner Photo Removed!*',
+    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Bot Settings', 'admin_bot_settings')]])
+  );
 });
 
 // 💳 Payment Accounts List
@@ -821,10 +828,7 @@ adminComposer.action('admin_payment_accounts', async (ctx) => {
     `Configure manual transfer accounts (JazzCash, EasyPaisa, Bank accounts, etc.) shown to customers at checkout.\n\n` +
     `Active accounts count: *${accounts.filter((a) => a.isEnabled).length}*`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getPaymentAccountsKeyboard(accounts).reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getPaymentAccountsKeyboard(accounts));
 });
 
 // 💳 View Single Payment Account
@@ -851,10 +855,7 @@ adminComposer.action(/^admin_payacc_view_(.+)$/, async (ctx) => {
     `• *Status:* ${account.isEnabled ? '✅ Enabled (Visible at checkout)' : '⏸ Disabled (Hidden)'}\n` +
     `• *Instructions:* ${account.instructions || '_(Default checkout instructions)_'}`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getPaymentAccountDetailKeyboard(account).reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getPaymentAccountDetailKeyboard(account));
 });
 
 // ✏️ Edit Account Number
@@ -868,14 +869,12 @@ adminComposer.action(/^admin_payacc_edit_num_(.+)$/, async (ctx) => {
   ctx.session.adminState = 'AWAITING_PAYACC_NUMBER';
   ctx.session.adminData = { accountId };
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `✏️ *Edit Account Number — ${account.providerName}*\n\nCurrent: \`${account.accountNumber}\`\n\nReply with the new account number / IBAN:`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
-        [Markup.button.callback('❌ Cancel', `admin_payacc_view_${accountId}`)],
-      ]).reply_markup,
-    }
+    Markup.inlineKeyboard([
+      [Markup.button.callback('❌ Cancel', `admin_payacc_view_${accountId}`)],
+    ])
   );
 });
 
@@ -890,14 +889,12 @@ adminComposer.action(/^admin_payacc_edit_title_(.+)$/, async (ctx) => {
   ctx.session.adminState = 'AWAITING_PAYACC_TITLE';
   ctx.session.adminData = { accountId };
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `🏷 *Edit Account Title — ${account.providerName}*\n\nCurrent: *${account.accountTitle}*\n\nReply with the new account holder title / name:`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
-        [Markup.button.callback('❌ Cancel', `admin_payacc_view_${accountId}`)],
-      ]).reply_markup,
-    }
+    Markup.inlineKeyboard([
+      [Markup.button.callback('❌ Cancel', `admin_payacc_view_${accountId}`)],
+    ])
   );
 });
 
@@ -912,14 +909,12 @@ adminComposer.action(/^admin_payacc_edit_instr_(.+)$/, async (ctx) => {
   ctx.session.adminState = 'AWAITING_PAYACC_INSTRUCTIONS';
   ctx.session.adminData = { accountId };
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `📝 *Edit Instructions — ${account.providerName}*\n\nCurrent:\n${account.instructions || '_(None)_'}\n\nReply with the new instructions, or send \`clear\` to reset:`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
-        [Markup.button.callback('❌ Cancel', `admin_payacc_view_${accountId}`)],
-      ]).reply_markup,
-    }
+    Markup.inlineKeyboard([
+      [Markup.button.callback('❌ Cancel', `admin_payacc_view_${accountId}`)],
+    ])
   );
 });
 
@@ -940,10 +935,7 @@ adminComposer.action(/^admin_payacc_toggle_(.+)$/, async (ctx) => {
     `• *Status:* ${updated.isEnabled ? '✅ Enabled (Visible at checkout)' : '⏸ Disabled (Hidden)'}\n` +
     `• *Instructions:* ${updated.instructions || '_(Default checkout instructions)_'}`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getPaymentAccountDetailKeyboard(updated).reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getPaymentAccountDetailKeyboard(updated));
 });
 
 // 🗑 Delete Account
@@ -959,10 +951,7 @@ adminComposer.action(/^admin_payacc_delete_(.+)$/, async (ctx) => {
     `Configure manual transfer accounts shown to customers at checkout.\n` +
     `Active accounts: *${accounts.filter((a) => a.isEnabled).length}*`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getPaymentAccountsKeyboard(accounts).reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getPaymentAccountsKeyboard(accounts));
 });
 
 // ➕ Add New Payment Account Wizard — Step 1: Provider Name
@@ -972,14 +961,12 @@ adminComposer.action('admin_payacc_add', async (ctx) => {
   ctx.session.adminState = 'AWAITING_NEW_PAYACC_PROVIDER';
   ctx.session.adminData = {};
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `➕ *Add Payment Account (Step 1/4)*\n\nReply with the *Provider / Bank Name* (e.g. \`JazzCash\`, \`EasyPaisa\`, \`Meezan Bank\`, \`SadaPay\`, \`Nayapay\`, \`Binance USDT\`):`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
-        [Markup.button.callback('❌ Cancel', 'admin_payment_accounts')],
-      ]).reply_markup,
-    }
+    Markup.inlineKeyboard([
+      [Markup.button.callback('❌ Cancel', 'admin_payment_accounts')],
+    ])
   );
 });
 
@@ -1000,10 +987,7 @@ adminComposer.action('admin_roles', async (ctx) => {
     `🛡 *Admin:* Access to products, stock, orders, payments, broadcasts.\n\n` +
     `Current Staff Members (${staffUsers.length}):`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getRolesManagementKeyboard(staffUsers).reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getRolesManagementKeyboard(staffUsers));
 });
 
 // 📋 View Full Staff List (Owners, Admins, Pending Pre-Authorizations)
@@ -1045,14 +1029,15 @@ adminComposer.action('admin_roles_list', async (ctx) => {
     });
   }
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: Markup.inlineKeyboard([
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([
       [Markup.button.callback('➕ Add / Change User Role', 'admin_roles_add')],
       [Markup.button.callback('🛡 Staff Management', 'admin_roles')],
       [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
-    ]).reply_markup,
-  });
+    ])
+  );
 });
 
 // 🛡 View Single Staff Member / Role Assignment
@@ -1075,10 +1060,7 @@ adminComposer.action(/^admin_roles_view_(.+)$/, async (ctx) => {
     `• *Joined:* ${new Date(user.createdAt).toLocaleDateString()}\n\n` +
     `Select a role below to assign:`;
 
-  await ctx.editMessageText(msg, {
-    parse_mode: 'Markdown',
-    reply_markup: getRoleAssignmentKeyboard(user.id).reply_markup,
-  });
+  await safeEditAdminMessage(ctx, msg, getRoleAssignmentKeyboard(user.id));
 });
 
 // ➕ Add / Change User Role — Prompt
@@ -1087,14 +1069,12 @@ adminComposer.action('admin_roles_add', async (ctx) => {
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_USER_LOOKUP_FOR_ROLE';
 
-  await ctx.editMessageText(
+  await safeEditAdminMessage(
+    ctx,
     `➕ *Assign Staff Role*\n\nPlease reply with the *Telegram @username* or numeric *Telegram ID* of the user you wish to promote or manage:\n\nExample: \`@username\` or \`123456789\``,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
-        [Markup.button.callback('❌ Cancel', 'admin_roles')],
-      ]).reply_markup,
-    }
+    Markup.inlineKeyboard([
+      [Markup.button.callback('❌ Cancel', 'admin_roles')],
+    ])
   );
 });
 
@@ -1120,13 +1100,14 @@ adminComposer.action(/^admin_roles_set_([A-Z]+)_(.+)$/, async (ctx) => {
       `• *User:* ${userDisplay} (\`${updated.telegramId.toString()}\`)\n` +
       `• *New Role:* *${updated.role}*`;
 
-    await ctx.editMessageText(msg, {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
+    await safeEditAdminMessage(
+      ctx,
+      msg,
+      Markup.inlineKeyboard([
         [Markup.button.callback('🛡 Staff & Roles', 'admin_roles')],
         [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
-      ]).reply_markup,
-    });
+      ])
+    );
   } catch (err: any) {
     logger.error('Failed to set user role', { error: err.message });
     await ctx.answerCbQuery(`⚠️ Error: ${err.message}`, { show_alert: true }).catch(() => {});
@@ -1166,13 +1147,14 @@ adminComposer.action(/^admin_preauth_([A-Z]+)_(.+)$/, async (ctx) => {
       `• *Role:* *${targetRole}*\n\n` +
       `When this user sends /start to the bot, they will automatically receive the *${targetRole}* role.`;
 
-    await ctx.editMessageText(msg, {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([
+    await safeEditAdminMessage(
+      ctx,
+      msg,
+      Markup.inlineKeyboard([
         [Markup.button.callback('🛡 Staff & Roles', 'admin_roles')],
         [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
-      ]).reply_markup,
-    });
+      ])
+    );
   } catch (err: any) {
     logger.error('Failed to pre-authorize staff', { error: err.message });
     await ctx.answerCbQuery(`⚠️ Error: ${err.message}`, { show_alert: true }).catch(() => {});

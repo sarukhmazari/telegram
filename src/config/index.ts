@@ -7,7 +7,10 @@ dotenv.config();
 const envSchema = z.object({
   BOT_TOKEN: z.string().trim().min(1, 'BOT_TOKEN is required'),
   ADMIN_IDS: z.string().transform((val) =>
-    val.split(',').map((id) => id.trim()).filter((id) => id.length > 0)
+    val
+      .split(',')
+      .map((id) => id.trim().replace(/^["']|["']$/g, ''))
+      .filter((id) => id.length > 0)
   ),
   DATABASE_URL: z.string().trim().min(1, 'DATABASE_URL is required'),
   ENCRYPTION_KEY: z.string().trim().min(16, 'ENCRYPTION_KEY must be at least 16 chars'),
@@ -64,7 +67,10 @@ if (!parsedEnv.success) {
   const rawStoreName = process.env.STORE_NAME || 'Digital Store';
   validatedConfig = {
     BOT_TOKEN: process.env.BOT_TOKEN || '',
-    ADMIN_IDS: (process.env.ADMIN_IDS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    ADMIN_IDS: (process.env.ADMIN_IDS || '')
+      .split(',')
+      .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+      .filter(Boolean),
     DATABASE_URL: process.env.DATABASE_URL || '',
     ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || 'default_fallback_encryption_key_32c',
     STORE_NAME: /^[a-f0-9]{32,64}$/i.test(rawStoreName) ? 'Digital Store' : rawStoreName,
