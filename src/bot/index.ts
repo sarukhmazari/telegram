@@ -47,6 +47,14 @@ bot.catch(handleBotError);
 
 // /start command
 bot.start(async (ctx) => {
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+    ctx.session.userState = undefined;
+    ctx.session.userData = undefined;
+    ctx.session.pendingStockLines = undefined;
+  }
+
   const userDisplay = ctx.from?.username
     ? `@${ctx.from.username}`
     : (ctx.from?.first_name || `User`);
@@ -76,6 +84,18 @@ bot.start(async (ctx) => {
     parse_mode: 'Markdown',
     reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
   });
+});
+
+// Cancel / Stop command
+bot.command(['cancel', 'stop'], async (ctx) => {
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+    ctx.session.userState = undefined;
+    ctx.session.userData = undefined;
+    ctx.session.pendingStockLines = undefined;
+  }
+  await ctx.reply('❌ Current operation cancelled.', getMainMenuKeyboard(ctx.isAdmin));
 });
 
 // Text commands
@@ -763,6 +783,14 @@ bot.action(/^pay_method_wallet_(.+)$/, async (ctx) => {
 
 // 📩 User Payment Proof Listener (Text TRX ID or Photo Screenshot)
 bot.on(['text', 'photo'], async (ctx, next) => {
+  if (ctx.message && 'text' in ctx.message && ctx.message.text.startsWith('/')) {
+    if (ctx.session) {
+      ctx.session.userState = undefined;
+      ctx.session.userData = undefined;
+    }
+    return next();
+  }
+
   if (ctx.session?.userState === 'AWAITING_PAYMENT_PROOF' && ctx.session?.userData?.orderId) {
     const { orderId, orderNumber, amount } = ctx.session.userData;
     const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);

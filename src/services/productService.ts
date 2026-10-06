@@ -117,9 +117,35 @@ export class ProductService {
     return category;
   }
 
+  static async generateUniqueCategorySlug(name: string): Promise<string> {
+    let baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    if (!baseSlug) {
+      baseSlug = `cat-${Date.now().toString(36)}`;
+    }
+    let slug = baseSlug;
+    let counter = 1;
+    while (await prisma.category.findUnique({ where: { slug } })) {
+      slug = `${baseSlug}-${counter++}`;
+    }
+    return slug;
+  }
+
+  static async generateUniqueProductSlug(name: string): Promise<string> {
+    let baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    if (!baseSlug) {
+      baseSlug = `prod-${Date.now().toString(36)}`;
+    }
+    let slug = baseSlug;
+    let counter = 1;
+    while (await prisma.product.findUnique({ where: { slug } })) {
+      slug = `${baseSlug}-${counter++}`;
+    }
+    return slug;
+  }
+
   static async createCategory(name: string, description?: string, position: number = 0): Promise<Category> {
     ProductService.invalidateCategoryCache();
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    const slug = await ProductService.generateUniqueCategorySlug(name);
     return prisma.category.create({
       data: {
         name,
@@ -128,6 +154,73 @@ export class ProductService {
         position,
       },
     });
+  }
+
+  static async toggleCategoryStatus(id: string): Promise<Category | null> {
+    ProductService.invalidateCategoryCache();
+    const cat = await prisma.category.findUnique({ where: { id } });
+    if (!cat) return null;
+    return prisma.category.update({
+      where: { id },
+      data: { isEnabled: !cat.isEnabled },
+    });
+  }
+
+  static async deleteCategory(id: string): Promise<{ success: boolean; message: string; isSoftDeleted?: boolean }> {
+    ProductService.invalidateCategoryCache();
+    const category = await prisma.category.findUnique({
+      where: { id },
+      include: {
+        products: {
+          include: {
+            variants: {
+              include: {
+                orderItems: { select: { id: true }, take: 1 },
+              },
+            },
+            reviews: { select: { id: true }, take: 1 },
+          },
+        },
+      },
+    });
+
+    if (!category) {
+      return { success: false, message: 'Category not found.' };
+    }
+
+    // Check if category or any of its products has past order history or reviews
+    const hasOrders = category.products.some((p) => p.variants.some((v) => v.orderItems.length > 0));
+    const hasReviews = category.products.some((p) => p.reviews.length > 0);
+
+    if (hasOrders || hasReviews) {
+      // Disable category and hide its products so old orders and invoices remain intact
+      await prisma.$transaction([
+        prisma.category.update({
+          where: { id },
+          data: { isEnabled: false },
+        }),
+        prisma.product.updateMany({
+          where: { categoryId: id },
+          data: { status: ProductStatus.DISABLED },
+        }),
+      ]);
+      return {
+        success: true,
+        isSoftDeleted: true,
+        message: `Category "${category.name}" has previous order history. To preserve sales history, it has been disabled and hidden from the store.`,
+      };
+    }
+
+    // Safe to hard delete completely
+    await prisma.category.delete({
+      where: { id },
+    });
+
+    return {
+      success: true,
+      isSoftDeleted: false,
+      message: `Category "${category.name}" and its products were successfully deleted.`,
+    };
   }
 
   // --- Product Operations ---
@@ -205,7 +298,7 @@ export class ProductService {
     isFeatured: boolean = false
   ): Promise<Product> {
     ProductService.invalidateCategoryCache();
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    const slug = await ProductService.generateUniqueProductSlug(name);
     return prisma.product.create({
       data: {
         categoryId,
@@ -216,6 +309,61 @@ export class ProductService {
         isFeatured,
       },
     });
+  }
+
+  static async toggleProductStatus(id: string): Promise<Product | null> {
+    ProductService.invalidateCategoryCache();
+    const prod = await prisma.product.findUnique({ where: { id } });
+    if (!prod) return null;
+    const newStatus = prod.status === ProductStatus.ACTIVE ? ProductStatus.DISABLED : ProductStatus.ACTIVE;
+    return prisma.product.update({
+      where: { id },
+      data: { status: newStatus },
+    });
+  }
+
+  static async deleteProduct(id: string): Promise<{ success: boolean; message: string; isSoftDeleted?: boolean }> {
+    ProductService.invalidateCategoryCache();
+    const product = await prisma.product.findUnique({
+      where: { id },
+      include: {
+        variants: {
+          include: {
+            orderItems: { select: { id: true }, take: 1 },
+          },
+        },
+        reviews: { select: { id: true }, take: 1 },
+      },
+    });
+
+    if (!product) {
+      return { success: false, message: 'Product not found.' };
+    }
+
+    const hasOrders = product.variants.some((v) => v.orderItems.length > 0);
+    const hasReviews = product.reviews.length > 0;
+
+    if (hasOrders || hasReviews) {
+      await prisma.product.update({
+        where: { id },
+        data: { status: ProductStatus.DISABLED },
+      });
+      return {
+        success: true,
+        isSoftDeleted: true,
+        message: `Product "${product.name}" has customer order history. It has been disabled and hidden from the store.`,
+      };
+    }
+
+    await prisma.product.delete({
+      where: { id },
+    });
+
+    return {
+      success: true,
+      isSoftDeleted: false,
+      message: `Product "${product.name}" was successfully deleted.`,
+    };
   }
 
   // --- Variant Operations ---
@@ -240,6 +388,14 @@ export class ProductService {
         description: description || null,
         currency,
       },
+    });
+  }
+
+  static async updateVariantPrice(variantId: string, newPrice: number): Promise<ProductVariant> {
+    ProductService.invalidateCategoryCache();
+    return prisma.productVariant.update({
+      where: { id: variantId },
+      data: { price: newPrice },
     });
   }
 

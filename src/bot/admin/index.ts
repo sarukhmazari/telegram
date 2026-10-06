@@ -5,7 +5,11 @@ import {
   getAdminMainKeyboard,
   getPaymentReviewKeyboard,
   getAdminProductsKeyboard,
+  getProductDetailKeyboard,
+  getProductDeleteConfirmKeyboard,
   getAdminCategoriesKeyboard,
+  getCategoryDetailKeyboard,
+  getCategoryDeleteConfirmKeyboard,
   getBotSettingsKeyboard,
   getPaymentAccountsKeyboard,
   getPaymentAccountDetailKeyboard,
@@ -136,21 +140,256 @@ adminComposer.action('admin_dashboard', async (ctx) => {
 // 📦 Products Management Screen
 adminComposer.action('admin_products', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const categories = await ProductService.getAllCategories();
-  const msg = `📦 *Product Management*\n\nYou can add new products in real-time or view current inventory.\nTotal Active Categories: ${categories.length}`;
-  await safeEditAdminMessage(ctx, msg, getAdminProductsKeyboard());
+  const products = await prisma.product.findMany({
+    orderBy: { createdAt: 'desc' },
+    include: { category: true, variants: true },
+    take: 30,
+  });
+  const msg = `📦 *Product Management*\n\nTap any product below to edit price, add stock, enable/disable, or delete it.\nTotal Products: ${products.length}`;
+  await safeEditAdminMessage(ctx, msg, getAdminProductsKeyboard(products));
+});
+
+// 📦 View Product Details
+adminComposer.action(/^admin_prod_view_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const prodId = ctx.match[1];
+  const product = await prisma.product.findUnique({
+    where: { id: prodId },
+    include: { category: true, variants: true },
+  });
+
+  if (!product) {
+    await ctx.answerCbQuery('Product not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const variant = product.variants[0];
+  const stockCount = variant ? await ProductService.getAvailableStockCount(variant.id) : 0;
+  const statusStr = product.status === 'ACTIVE' ? '✅ Active (Shown in Store)' : '⏸ Disabled (Hidden)';
+
+  const msg =
+    `📦 *Product Details*\n\n` +
+    `• *Name:* ${product.name}\n` +
+    `• *Category:* ${product.category?.name || 'N/A'}\n` +
+    `• *Price:* Rs. ${variant ? Number(variant.price).toFixed(2) : '0.00'} PKR\n` +
+    `• *Stock Available:* ${stockCount} items\n` +
+    `• *Status:* ${statusStr}\n` +
+    `• *Description:* ${product.description || 'N/A'}\n\n` +
+    `Select an option below:`;
+
+  await safeEditAdminMessage(ctx, msg, getProductDetailKeyboard(product));
+});
+
+// 📦 Toggle Product Status (Active / Disabled)
+adminComposer.action(/^admin_prod_toggle_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const prodId = ctx.match[1];
+  const updated = await ProductService.toggleProductStatus(prodId);
+  if (!updated) {
+    await ctx.answerCbQuery('Product not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  await ctx.answerCbQuery(updated.status === 'ACTIVE' ? '✅ Product Enabled!' : '⏸ Product Disabled!').catch(() => {});
+
+  const product = await prisma.product.findUnique({
+    where: { id: prodId },
+    include: { category: true, variants: true },
+  });
+
+  const variant = product?.variants[0];
+  const stockCount = variant ? await ProductService.getAvailableStockCount(variant.id) : 0;
+  const statusStr = product?.status === 'ACTIVE' ? '✅ Active (Shown in Store)' : '⏸ Disabled (Hidden)';
+
+  const msg =
+    `📦 *Product Details*\n\n` +
+    `• *Name:* ${product?.name}\n` +
+    `• *Category:* ${product?.category?.name || 'N/A'}\n` +
+    `• *Price:* Rs. ${variant ? Number(variant.price).toFixed(2) : '0.00'} PKR\n` +
+    `• *Stock Available:* ${stockCount} items\n` +
+    `• *Status:* ${statusStr}\n` +
+    `• *Description:* ${product?.description || 'N/A'}\n\n` +
+    `Select an option below:`;
+
+  await safeEditAdminMessage(ctx, msg, getProductDetailKeyboard(product));
+});
+
+// 💰 Direct Edit Price Action for Product
+adminComposer.action(/^admin_prod_price_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const variantId = ctx.match[1];
+  const variant = await prisma.productVariant.findUnique({
+    where: { id: variantId },
+    include: { product: true },
+  });
+
+  if (!variant) {
+    await ctx.answerCbQuery('Product variant not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_STOCK_PRICE';
+  ctx.session.adminData = {
+    variantId,
+    productName: variant.product.name,
+    variantName: variant.name,
+    currentPrice: Number(variant.price),
+    directPriceEdit: true,
+  };
+
+  const promptText =
+    `💰 *Edit Price — ${variant.product.name}*\n\n` +
+    `Current Price: *Rs. ${Number(variant.price).toFixed(2)} PKR*\n\n` +
+    `Reply with the *new price in PKR* (e.g. \`1500\` or \`2500\`):\n\n` +
+    `Or type \`skip\` to cancel without changing.`;
+
+  await safeEditAdminMessage(
+    ctx,
+    promptText,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]])
+  );
+});
+
+// 🗑 Confirm Product Deletion
+adminComposer.action(/^admin_prod_del_confirm_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const prodId = ctx.match[1];
+  const product = await ProductService.getProductById(prodId);
+  if (!product) {
+    await ctx.answerCbQuery('Product not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const msg =
+    `⚠️ *Confirm Product Deletion*\n\n` +
+    `Are you sure you want to delete *"${product.name}"*?\n\n` +
+    `_Note: If this product has past customer orders, it will be safely disabled & hidden from the store to preserve order receipts._`;
+
+  await safeEditAdminMessage(ctx, msg, getProductDeleteConfirmKeyboard(prodId));
+});
+
+// 🗑 Execute Product Deletion
+adminComposer.action(/^admin_prod_delete_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const prodId = ctx.match[1];
+  const result = await ProductService.deleteProduct(prodId);
+
+  const products = await prisma.product.findMany({
+    orderBy: { createdAt: 'desc' },
+    include: { category: true, variants: true },
+    take: 30,
+  });
+
+  const text = `${result.success ? '✅' : '⚠️'} ${result.message}\n\n📦 *Remaining Products (${products.length}):*`;
+  await safeEditAdminMessage(ctx, text, getAdminProductsKeyboard(products));
 });
 
 // 🗂 Categories Management Screen
 adminComposer.action('admin_categories', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const categories = await ProductService.getAllCategories();
-  let text = `🗂 *Category Management*\n\nActive Categories (${categories.length}):\n`;
-  categories.forEach((c) => {
-    text += `• ${c.name}\n`;
+  const categories = await prisma.category.findMany({
+    orderBy: { position: 'asc' },
+    include: {
+      _count: {
+        select: { products: true },
+      },
+    },
+  });
+  const text = `🗂 *Category Management*\n\nTap any category below to manage, enable/disable, or delete it.\nTotal Categories: ${categories.length}`;
+  await safeEditAdminMessage(ctx, text, getAdminCategoriesKeyboard(categories));
+});
+
+// 🗂 View Category Details
+adminComposer.action(/^admin_cat_view_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const catId = ctx.match[1];
+  const category = await prisma.category.findUnique({
+    where: { id: catId },
+    include: {
+      products: true,
+      _count: { select: { products: true } },
+    },
   });
 
-  await safeEditAdminMessage(ctx, text, getAdminCategoriesKeyboard());
+  if (!category) {
+    await ctx.answerCbQuery('Category not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const statusStr = category.isEnabled ? '✅ Active (Shown in Store)' : '⏸ Disabled (Hidden from Store)';
+  const msg =
+    `🗂 *Category Details*\n\n` +
+    `📁 *Name:* ${category.name}\n` +
+    `🔗 *Slug:* \`${category.slug}\`\n` +
+    `📊 *Status:* ${statusStr}\n` +
+    `📦 *Products:* ${category.products.length} products\n\n` +
+    `Select an action below:`;
+
+  await safeEditAdminMessage(ctx, msg, getCategoryDetailKeyboard(category));
+});
+
+// 🗂 Toggle Category Enabled / Disabled
+adminComposer.action(/^admin_cat_toggle_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const catId = ctx.match[1];
+  const updated = await ProductService.toggleCategoryStatus(catId);
+  if (!updated) {
+    await ctx.answerCbQuery('Category not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const statusAlert = updated.isEnabled ? '✅ Category Enabled!' : '⏸ Category Disabled!';
+  await ctx.answerCbQuery(statusAlert).catch(() => {});
+
+  const category = await prisma.category.findUnique({
+    where: { id: catId },
+    include: { products: true, _count: { select: { products: true } } },
+  });
+
+  const statusStr = category?.isEnabled ? '✅ Active (Shown in Store)' : '⏸ Disabled (Hidden from Store)';
+  const msg =
+    `🗂 *Category Details*\n\n` +
+    `📁 *Name:* ${category?.name}\n` +
+    `🔗 *Slug:* \`${category?.slug}\`\n` +
+    `📊 *Status:* ${statusStr}\n` +
+    `📦 *Products:* ${category?.products.length || 0} products\n\n` +
+    `Select an action below:`;
+
+  await safeEditAdminMessage(ctx, msg, getCategoryDetailKeyboard(category));
+});
+
+// 🗑 Confirm Category Deletion
+adminComposer.action(/^admin_cat_del_confirm_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const catId = ctx.match[1];
+  const category = await ProductService.getCategoryById(catId);
+  if (!category) {
+    await ctx.answerCbQuery('Category not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const msg =
+    `⚠️ *Confirm Category Deletion*\n\n` +
+    `Are you sure you want to delete category *"${category.name}"*?\n\n` +
+    `_Note: If this category has past customer orders, it will be safely disabled & hidden from the store instead of deleting past invoices._`;
+
+  await safeEditAdminMessage(ctx, msg, getCategoryDeleteConfirmKeyboard(catId));
+});
+
+// 🗑 Execute Category Deletion
+adminComposer.action(/^admin_cat_delete_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const catId = ctx.match[1];
+  const result = await ProductService.deleteCategory(catId);
+
+  const categories = await prisma.category.findMany({
+    orderBy: { position: 'asc' },
+    include: { _count: { select: { products: true } } },
+  });
+
+  const text = `${result.success ? '✅' : '⚠️'} ${result.message}\n\n🗂 *Categories Remaining (${categories.length}):*`;
+  await safeEditAdminMessage(ctx, text, getAdminCategoriesKeyboard(categories));
 });
 
 // ➕ Add New Category Action
@@ -162,7 +401,7 @@ adminComposer.action('admin_add_category', async (ctx) => {
   await safeEditAdminMessage(
     ctx,
     '➕ *Add New Store Category*\n\nPlease reply with the category name (e.g., `🍿 Disney+` or `🎮 PlayStation`):',
-    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]])
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_categories')]])
   );
 });
 
@@ -178,7 +417,7 @@ adminComposer.action('admin_add_product', async (ctx) => {
   const buttons = categories.map((c) => [
     Markup.button.callback(`${c.name}`, `admin_select_cat_${c.id}`),
   ]);
-  buttons.push([Markup.button.callback('❌ Cancel', 'admin_main')]);
+  buttons.push([Markup.button.callback('❌ Cancel', 'admin_products')]);
 
   await safeEditAdminMessage(
     ctx,
@@ -205,7 +444,7 @@ adminComposer.action(/^admin_select_cat_(.+)$/, async (ctx) => {
   await safeEditAdminMessage(
     ctx,
     `➕ *Add New Product to ${category.name} (Step 2/3)*\n\nPlease reply with the *Product Name* (e.g. \`ChatGPT Plus 1 Month Private Account\`):`,
-    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]])
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]])
   );
 });
 
@@ -1163,7 +1402,21 @@ adminComposer.action(/^admin_preauth_([A-Z]+)_(.+)$/, async (ctx) => {
 
 // 📩 Message Listener (Text & Photo) for Admin Input Wizard & Broadcasts
 adminComposer.on(['text', 'photo'], async (ctx, next) => {
+  // If the message is a command (e.g. /start, /admin, /cancel, /stop, /shop), clear any stale wizard state and pass immediately to the command handler
+  if (ctx.message && 'text' in ctx.message && ctx.message.text.startsWith('/')) {
+    if (ctx.session) {
+      ctx.session.adminState = undefined;
+      ctx.session.adminData = undefined;
+      ctx.session.pendingStockLines = undefined;
+    }
+    return next();
+  }
+
   const state = ctx.session?.adminState;
+  if (!state) {
+    return next();
+  }
+
   const adminData = ctx.session?.adminData || {};
   
   let text = '';
@@ -1499,11 +1752,24 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     return;
   }
 
-  // Stock Upload Wizard — Step 1: Price Input
+  // Stock Upload Wizard & Direct Price Edit — Step 1: Price Input
   if (state === 'AWAITING_STOCK_PRICE' && adminData.variantId) {
-    const { variantId, productName, variantName, currentPrice } = adminData;
+    const { variantId, productName, variantName, currentPrice, directPriceEdit } = adminData;
 
     if (text.toLowerCase() === 'skip') {
+      if (directPriceEdit) {
+        ctx.session!.adminState = undefined;
+        ctx.session!.adminData = undefined;
+        await ctx.reply(`✅ *Price kept at Rs. ${Number(currentPrice).toFixed(2)} PKR* (no changes made).`, {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('📦 Products Management', 'admin_products')],
+            [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+          ]).reply_markup,
+        });
+        return;
+      }
+
       // Keep existing price, move straight to stock entry
       ctx.session!.adminState = 'AWAITING_STOCK_INPUT';
 
@@ -1520,35 +1786,59 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
       return;
     }
 
-    const newPrice = parseFloat(text);
+    const cleanPrice = text.replace(/,/g, '').replace(/[^0-9.]/g, '');
+    const newPrice = parseFloat(cleanPrice);
     if (isNaN(newPrice) || newPrice < 0) {
       await ctx.reply(
-        '⚠️ Invalid price. Enter a valid number (e.g. `1500`) or type `skip` to keep the current price.',
+        '⚠️ Invalid price. Please enter a valid number (e.g. `1500` or `1500 PKR`) or type `skip` to keep the current price.',
         { parse_mode: 'Markdown' }
       );
       return;
     }
 
-    // Update price in database
-    await prisma.productVariant.update({
-      where: { id: variantId },
-      data: { price: newPrice },
-    });
+    try {
+      // Update price in database
+      await ProductService.updateVariantPrice(variantId, newPrice);
 
-    // Advance to stock entry step
-    ctx.session!.adminState = 'AWAITING_STOCK_INPUT';
-    ctx.session!.adminData = { ...adminData, currentPrice: newPrice };
+      if (directPriceEdit) {
+        ctx.session!.adminState = undefined;
+        ctx.session!.adminData = undefined;
 
-    await ctx.reply(
-      `✅ *Price updated to Rs. ${newPrice.toFixed(2)} PKR!*\n\n` +
-      `📥 *Now send the stock entry for ${productName}:*\n\n` +
-      `Reply with the account / key (e.g. \`email@example.com:password\`)\n\n` +
-      `🔒 It will be AES-256 encrypted before saving.`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_stock')]]).reply_markup,
+        await ctx.reply(
+          `🎉 *Price for "${productName}" updated to Rs. ${newPrice.toFixed(2)} PKR!*`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('📦 Products Management', 'admin_products')],
+              [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+            ]).reply_markup,
+          }
+        );
+        return;
       }
-    );
+
+      // Advance to stock entry step
+      ctx.session!.adminState = 'AWAITING_STOCK_INPUT';
+      ctx.session!.adminData = { ...adminData, currentPrice: newPrice };
+
+      await ctx.reply(
+        `✅ *Price updated to Rs. ${newPrice.toFixed(2)} PKR!*\n\n` +
+        `📥 *Now send the stock entry for ${productName}:*\n\n` +
+        `Reply with the account / key (e.g. \`email@example.com:password\`)\n\n` +
+        `🔒 It will be AES-256 encrypted before saving.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_stock')]]).reply_markup,
+        }
+      );
+    } catch (err: any) {
+      logger.error('Failed to update variant price', { error: err.message, variantId });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to update price: ${err.message}`, {
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]]).reply_markup,
+      });
+    }
     return;
   }
 
@@ -1564,31 +1854,40 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
       return;
     }
 
-    const result = await AdminService.importBulkStock(variantId, [stockEntry]);
+    try {
+      const result = await AdminService.importBulkStock(variantId, [stockEntry]);
 
-    ctx.session!.adminState = undefined;
-    ctx.session!.adminData = undefined;
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
 
-    const availableStock = await ProductService.getAvailableStockCount(variantId);
+      const availableStock = await ProductService.getAvailableStockCount(variantId);
 
-    let summaryMsg: string;
-    if (result.duplicateCount > 0) {
-      summaryMsg =
-        `⚠️ *Duplicate Detected!*\n\n` +
-        `📦 *Product:* ${productName}\n` +
-        `This stock entry already exists in the database. Nothing was added.\n` +
-        `📊 *Total Live Stock:* ${availableStock} items available`;
-    } else {
-      summaryMsg =
-        `✅ *1 Stock Item Added & Encrypted!*\n\n` +
-        `📦 *Product:* ${productName}\n` +
-        `📊 *Total Live Stock:* ${availableStock} items available`;
+      let summaryMsg: string;
+      if (result.duplicateCount > 0) {
+        summaryMsg =
+          `⚠️ *Duplicate Detected!*\n\n` +
+          `📦 *Product:* ${productName}\n` +
+          `This stock entry already exists in the database. Nothing was added.\n` +
+          `📊 *Total Live Stock:* ${availableStock} items available`;
+      } else {
+        summaryMsg =
+          `✅ *1 Stock Item Added & Encrypted!*\n\n` +
+          `📦 *Product:* ${productName}\n` +
+          `📊 *Total Live Stock:* ${availableStock} items available`;
+      }
+
+      await ctx.reply(summaryMsg, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📦 Back to Stock Management', 'admin_stock')]]).reply_markup,
+      });
+    } catch (err: any) {
+      logger.error('Failed to import stock item', { error: err.message, variantId });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to add stock: ${err.message}`, {
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Stock Management', 'admin_stock')]]).reply_markup,
+      });
     }
-
-    await ctx.reply(summaryMsg, {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📦 Back to Stock Management', 'admin_stock')]]).reply_markup,
-    });
     return;
   }
 
@@ -1596,77 +1895,124 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
 
   // Category Creation Wizard
   if (state === 'AWAITING_CATEGORY_NAME') {
-    const category = await ProductService.createCategory(text);
-    ctx.session!.adminState = undefined;
-    await ctx.reply(`✅ *Category "${category.name}" Created in Real-Time!*`, {
-      parse_mode: 'Markdown',
-      reply_markup: getAdminCategoriesKeyboard().reply_markup,
-    });
+    if (!text) {
+      await ctx.reply('⚠️ Category name cannot be empty. Please reply with a valid category name:');
+      return;
+    }
+
+    try {
+      const category = await ProductService.createCategory(text);
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+
+      await ctx.reply(`✅ *Category "${category.name}" Created in Real-Time!*`, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('➕ Add Product to this Category', `admin_select_cat_${category.id}`)],
+          [Markup.button.callback('🗂 Category Management', 'admin_categories')],
+          [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+        ]).reply_markup,
+      });
+    } catch (err: any) {
+      logger.error('Failed to create category', { error: err.message });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to create category: ${err.message}`, {
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🗂 Categories', 'admin_categories')]]).reply_markup,
+      });
+    }
     return;
   }
 
   // Product Creation Wizard — Step 2: Name -> Ask Description
   if (state === 'AWAITING_PRODUCT_NAME') {
+    if (!text) {
+      await ctx.reply('⚠️ Product name cannot be empty. Please enter a product name:');
+      return;
+    }
     adminData.name = text;
     ctx.session!.adminData = adminData;
     ctx.session!.adminState = 'AWAITING_PRODUCT_DESCRIPTION';
 
     await ctx.reply(
       `✅ Product Name set: *${text}*\n\n*(Step 3/3)* Now reply with the *Product Description*:`,
-      { parse_mode: 'Markdown' }
+      {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]]).reply_markup,
+      }
     );
     return;
   }
 
   // Product Creation Wizard — Step 3: Description -> Ask Price
   if (state === 'AWAITING_PRODUCT_DESCRIPTION') {
-    adminData.description = text;
+    adminData.description = text || '';
     ctx.session!.adminData = adminData;
     ctx.session!.adminState = 'AWAITING_PRODUCT_PRICE';
 
     await ctx.reply(
       `✅ Description saved!\n\n*(Final Step)* Reply with the *Price in PKR* (e.g. \`500\` or \`1200\`):`,
-      { parse_mode: 'Markdown' }
+      {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]]).reply_markup,
+      }
     );
     return;
   }
 
   // Product Creation Wizard — Step 4: Price -> Create Product Real-Time!
   if (state === 'AWAITING_PRODUCT_PRICE') {
-    const priceNum = parseFloat(text);
+    const cleanPrice = text.replace(/,/g, '').replace(/[^0-9.]/g, '');
+    const priceNum = parseFloat(cleanPrice);
     if (isNaN(priceNum) || priceNum < 0) {
-      await ctx.reply('⚠️ Invalid price! Please enter a valid number (e.g. `500` or `0`):', { parse_mode: 'Markdown' });
+      await ctx.reply('⚠️ Invalid price! Please enter a valid number (e.g. `500` or `1200 PKR`):', {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]]).reply_markup,
+      });
       return;
     }
 
     const { categoryId, categoryName, name, description } = adminData;
 
-    // Create Product & Variant in Database Real-Time!
-    const product = await ProductService.createProduct(categoryId, name, description);
-    await ProductService.createVariant(
-      product.id,
-      'Standard License',
-      priceNum,
-      DeliveryType.AUTOMATIC,
-      undefined,
-      undefined,
-      'PKR'
-    );
+    try {
+      // Create Product & Variant in Database Real-Time!
+      const product = await ProductService.createProduct(categoryId, name, description);
+      const variant = await ProductService.createVariant(
+        product.id,
+        'Standard License',
+        priceNum,
+        DeliveryType.AUTOMATIC,
+        undefined,
+        undefined,
+        'PKR'
+      );
 
-    ctx.session!.adminState = undefined;
-    ctx.session!.adminData = undefined;
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
 
-    const successMsg =
-      `🎉 *Product Added Live to Store in Real-Time!*\n\n` +
-      `📦 *Product Name:* ${product.name}\n` +
-      `📁 *Category:* ${categoryName}\n` +
-      `💰 *Price:* Rs. ${priceNum.toFixed(2)} PKR\n` +
-      `📊 *Status:* Active & Live in Store`;
+      const successMsg =
+        `🎉 *Product Added Live to Store in Real-Time!*\n\n` +
+        `📦 *Product Name:* ${product.name}\n` +
+        `📁 *Category:* ${categoryName || 'Store Category'}\n` +
+        `💰 *Price:* Rs. ${priceNum.toFixed(2)} PKR\n` +
+        `📊 *Status:* Active & Live in Store`;
 
-    await ctx.reply(successMsg, {
-      parse_mode: 'Markdown',
-      reply_markup: getAdminProductsKeyboard().reply_markup,
-    });
+      await ctx.reply(successMsg, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('📥 Add Stock to Product', `admin_add_stock_${variant.id}`)],
+          [Markup.button.callback('📦 Products Management', 'admin_products')],
+          [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
+        ]).reply_markup,
+      });
+    } catch (err: any) {
+      logger.error('Failed to create product at price step', { error: err.message, adminData });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to create product: ${err.message}`, {
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📦 Products Management', 'admin_products')]]).reply_markup,
+      });
+    }
     return;
   }
 

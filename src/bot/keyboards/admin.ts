@@ -1,5 +1,5 @@
 import { Markup } from 'telegraf';
-import { PaymentAccount, User } from '@prisma/client';
+import { PaymentAccount, User, Category, Product, ProductVariant } from '@prisma/client';
 
 export function getAdminMainKeyboard() {
   return Markup.inlineKeyboard([
@@ -105,17 +105,83 @@ export function getPreAuthRoleKeyboard(rawQuery: string) {
   ]);
 }
 
-export function getAdminProductsKeyboard() {
+export function getAdminProductsKeyboard(products?: any[]) {
+  const buttons: any[] = [];
+  if (products && products.length > 0) {
+    products.forEach((p) => {
+      const statusIcon = p.status === 'ACTIVE' ? '✅' : '⏸';
+      const price = p.variants?.[0]?.price ? ` (Rs. ${Number(p.variants[0].price).toFixed(0)})` : '';
+      buttons.push([
+        Markup.button.callback(`${statusIcon} ${p.name}${price}`, `admin_prod_view_${p.id}`),
+      ]);
+    });
+  }
+  buttons.push([Markup.button.callback('➕ Add New Product', 'admin_add_product')]);
+  buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getProductDetailKeyboard(product: any) {
+  const v = product.variants?.[0];
+  const buttons: any[] = [];
+  if (v) {
+    buttons.push([
+      Markup.button.callback('💰 Edit Price', `admin_prod_price_${v.id}`),
+      Markup.button.callback('📥 Add Stock', `admin_add_stock_${v.id}`),
+    ]);
+  }
+  buttons.push([
+    Markup.button.callback(
+      product.status === 'ACTIVE' ? '⏸ Disable' : '✅ Enable',
+      `admin_prod_toggle_${product.id}`
+    ),
+    Markup.button.callback('🗑 Delete Product', `admin_prod_del_confirm_${product.id}`),
+  ]);
+  buttons.push([Markup.button.callback('⬅️ Back to Products', 'admin_products')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getProductDeleteConfirmKeyboard(productId: string) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('➕ Add New Product', 'admin_add_product')],
-    [Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')],
+    [Markup.button.callback('⚠️ Yes, Delete Product', `admin_prod_delete_${productId}`)],
+    [Markup.button.callback('❌ Cancel', `admin_prod_view_${productId}`)],
   ]);
 }
 
-export function getAdminCategoriesKeyboard() {
+export function getAdminCategoriesKeyboard(categories?: any[]) {
+  const buttons: any[] = [];
+  if (categories && categories.length > 0) {
+    categories.forEach((c) => {
+      const statusIcon = c.isEnabled ? '✅' : '⏸';
+      const prodCount = c._count?.products !== undefined ? ` (${c._count.products} prods)` : '';
+      buttons.push([
+        Markup.button.callback(`${statusIcon} ${c.name}${prodCount}`, `admin_cat_view_${c.id}`),
+      ]);
+    });
+  }
+  buttons.push([Markup.button.callback('➕ Add New Category', 'admin_add_category')]);
+  buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getCategoryDetailKeyboard(category: any) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('➕ Add New Category', 'admin_add_category')],
-    [Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')],
+    [
+      Markup.button.callback(
+        category.isEnabled ? '⏸ Disable' : '✅ Enable',
+        `admin_cat_toggle_${category.id}`
+      ),
+      Markup.button.callback('🗑 Delete Category', `admin_cat_del_confirm_${category.id}`),
+    ],
+    [Markup.button.callback('➕ Add Product Here', `admin_select_cat_${category.id}`)],
+    [Markup.button.callback('⬅️ Back to Categories', 'admin_categories')],
+  ]);
+}
+
+export function getCategoryDeleteConfirmKeyboard(categoryId: string) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('⚠️ Yes, Delete Category', `admin_cat_delete_${categoryId}`)],
+    [Markup.button.callback('❌ Cancel', `admin_cat_view_${categoryId}`)],
   ]);
 }
 
