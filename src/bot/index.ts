@@ -402,7 +402,7 @@ bot.action('menu_support', async (ctx) => {
   await safeEditMessage(ctx, helpText, keyboard);
 });
 
-// Category Click — Show Product Details with Live Price & Live Stock Count
+// Category Click — Show all Products or Plan Types in Category
 bot.action(/^cat_(.+)$/, async (ctx) => {
   ctx.answerCbQuery().catch(() => {});
   const categoryId = ctx.match[1];
@@ -415,15 +415,13 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
 
   if (products.length === 0) {
     const msg =
-      `🛍 *Product Details*\n\n` +
-      `📦 *Product:* ${category.name}\n` +
+      `🛍 *${category.name}*\n\n` +
       `📁 *Category:* ${category.name}\n` +
-      `📊 *Available Items:* 0\n` +
-      `💰 *Price:* Rs. 0.00 PKR\n\n` +
-      `📝 *Description:*\n${category.description || 'No description provided for this product.'}`;
+      `📊 *Available Products:* 0\n\n` +
+      `⚠️ *No active products available in this category at the moment.*\n\n` +
+      `📝 *Description:*\n${category.description || 'Check back later for updates!'}`;
 
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('⚠️ Out of Stock (Rs. 0.00)', 'buy_zero_item')],
       [
         Markup.button.callback('⬅️ Back to Store Categories', 'menu_store'),
         Markup.button.callback('🏠 Home', 'menu_main'),
@@ -434,45 +432,92 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
     return;
   }
 
-  const mainProduct = products[0];
-  const rawProductName = mainProduct ? mainProduct.name : category.name;
-  const description = mainProduct ? mainProduct.description : (category.description || 'No description provided.');
+  // If there are multiple products/plans in this category (e.g. 20 Days, 1 Year, Plus, etc.)
+  if (products.length > 1) {
+    const descText = category.description ? `📝 ${category.description}\n\n` : '';
+    const msg =
+      `🛍 *${category.name} Products*\n\n` +
+      `📁 *Category:* ${category.name}\n` +
+      descText +
+      `📦 *Available Products (${products.length}):*\n` +
+      `Select an option below to view details and purchase:`;
 
-  let priceStr = '0.00';
-  let stockCount = 0;
-  let variantId = '';
-
-  if (mainProduct && mainProduct.variants && mainProduct.variants.length > 0) {
-    const variant = mainProduct.variants[0];
-    variantId = variant.id;
-    priceStr = Number(variant.price).toFixed(2);
-    stockCount = (variant as any)._count?.stockItems ?? 0;
+    await safeEditMessage(ctx, msg, getProductsKeyboard(products, category.id));
+    return;
   }
+
+  // If there is exactly 1 product in this category
+  const product = products[0];
+  const variants = product.variants || [];
+  const desc = product.description || category.description || 'No description provided.';
+
+  if (variants.length === 0) {
+    const msg =
+      `🛍 *Product Details*\n\n` +
+      `📦 *Product:* ${product.name}\n` +
+      `📁 *Category:* ${category.name}\n\n` +
+      `⚠️ *No packages available for this product currently.*\n\n` +
+      `📝 *Description:*\n${desc}`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('⬅️ Back to Store Categories', 'menu_store'),
+        Markup.button.callback('🏠 Home', 'menu_main'),
+      ],
+    ]);
+
+    await safeEditMessage(ctx, msg, keyboard);
+    return;
+  }
+
+  if (variants.length === 1) {
+    const variant = variants[0];
+    const stockCount = (variant as any)._count?.stockItems ?? 0;
+    const priceStr = Number(variant.price).toFixed(2);
+    const deliveryStr = variant.deliveryType === 'AUTOMATIC' ? '⚡ Instant Auto Delivery' : '🖐 Manual Delivery';
+
+    const msg =
+      `🛍 *Product Details*\n\n` +
+      `📦 *Product:* ${product.name}\n` +
+      `📁 *Category:* ${category.name}\n` +
+      `📊 *Available Items:* ${stockCount}\n` +
+      `💰 *Price:* Rs. ${priceStr} PKR\n` +
+      `🚀 *Delivery:* ${deliveryStr}\n\n` +
+      `📝 *Description:*\n${desc}`;
+
+    const buyButton = stockCount > 0
+      ? Markup.button.callback(`💳 Buy Now (Rs. ${priceStr})`, `buy_var_${variant.id}`)
+      : Markup.button.callback(`⚠️ Out of Stock (Rs. ${priceStr})`, 'buy_zero_item');
+
+    const keyboard = Markup.inlineKeyboard([
+      [buyButton],
+      [
+        Markup.button.callback('⬅️ Back to Store Categories', 'menu_store'),
+        Markup.button.callback('🏠 Home', 'menu_main'),
+      ],
+    ]);
+
+    await safeEditMessage(ctx, msg, keyboard);
+    return;
+  }
+
+  // Single product with multiple variants/durations
+  const totalStock = variants.reduce((sum: number, v: any) => sum + ((v as any)._count?.stockItems ?? 0), 0);
+  const minPrice = Math.min(...variants.map((v: any) => Number(v.price)));
 
   const msg =
     `🛍 *Product Details*\n\n` +
-    `📦 *Product:* ${rawProductName}\n` +
+    `📦 *Product:* ${product.name}\n` +
     `📁 *Category:* ${category.name}\n` +
-    `📊 *Available Items:* ${stockCount}\n` +
-    `💰 *Price:* Rs. ${priceStr} PKR\n\n` +
-    `📝 *Description:*\n${description}`;
+    `📊 *Total Stock:* ${totalStock}\n` +
+    `💰 *Starting from:* Rs. ${minPrice.toFixed(0)} PKR\n\n` +
+    `📝 *Description:*\n${desc}\n\n` +
+    `👇 *Select your preferred plan / duration:*`;
 
-  const buyButton = stockCount > 0
-    ? Markup.button.callback(`💳 Buy Now (Rs. ${priceStr})`, `buy_var_${variantId}`)
-    : Markup.button.callback(`⚠️ Out of Stock (Rs. ${priceStr})`, 'buy_zero_item');
-
-  const keyboard = Markup.inlineKeyboard([
-    [buyButton],
-    [
-      Markup.button.callback('⬅️ Back to Store Categories', 'menu_store'),
-      Markup.button.callback('🏠 Home', 'menu_main'),
-    ],
-  ]);
-
-  await safeEditMessage(ctx, msg, keyboard);
+  await safeEditMessage(ctx, msg, getProductVariantsKeyboard(product, variants, 'menu_store'));
 });
 
-// Product Click — Show Details
+// Product Click — Show Details with All Variants
 bot.action(/^prod_(.+)$/, async (ctx) => {
   ctx.answerCbQuery().catch(() => {});
   const productId = ctx.match[1];
@@ -482,38 +527,74 @@ bot.action(/^prod_(.+)$/, async (ctx) => {
   }
 
   const categoryName = product.category ? product.category.name : 'Digital Store';
-  let priceStr = '0.00';
-  let stockCount = 0;
-  let variantId = '';
+  const variants = product.variants || [];
+  const desc = product.description || 'No description provided.';
+  const backTarget = product.categoryId ? `cat_${product.categoryId}` : 'menu_store';
 
-  if (product.variants.length > 0) {
-    const variant = product.variants[0];
-    variantId = variant.id;
-    priceStr = Number(variant.price).toFixed(2);
-    stockCount = (variant as any)._count?.stockItems ?? 0;
+  if (variants.length === 0) {
+    const msg =
+      `🛍 *Product Details*\n\n` +
+      `📦 *Product:* ${product.name}\n` +
+      `📁 *Category:* ${categoryName}\n\n` +
+      `⚠️ *No packages available for this product currently.*\n\n` +
+      `📝 *Description:*\n${desc}`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('⬅️ Back to Products', backTarget),
+        Markup.button.callback('🏠 Home', 'menu_main'),
+      ],
+    ]);
+
+    await safeEditMessage(ctx, msg, keyboard);
+    return;
   }
+
+  if (variants.length === 1) {
+    const variant = variants[0];
+    const stockCount = (variant as any)._count?.stockItems ?? 0;
+    const priceStr = Number(variant.price).toFixed(2);
+    const deliveryStr = variant.deliveryType === 'AUTOMATIC' ? '⚡ Instant Auto Delivery' : '🖐 Manual Delivery';
+
+    const msg =
+      `🛍 *Product Details*\n\n` +
+      `📦 *Product:* ${product.name}\n` +
+      `📁 *Category:* ${categoryName}\n` +
+      `📊 *Available Items:* ${stockCount}\n` +
+      `💰 *Price:* Rs. ${priceStr} PKR\n` +
+      `🚀 *Delivery:* ${deliveryStr}\n\n` +
+      `📝 *Description:*\n${desc}`;
+
+    const buyButton = stockCount > 0
+      ? Markup.button.callback(`💳 Buy Now (Rs. ${priceStr})`, `buy_var_${variant.id}`)
+      : Markup.button.callback(`⚠️ Out of Stock (Rs. ${priceStr})`, 'buy_zero_item');
+
+    const keyboard = Markup.inlineKeyboard([
+      [buyButton],
+      [
+        Markup.button.callback('⬅️ Back to Products', backTarget),
+        Markup.button.callback('🏠 Home', 'menu_main'),
+      ],
+    ]);
+
+    await safeEditMessage(ctx, msg, keyboard);
+    return;
+  }
+
+  // Multiple variants for product
+  const totalStock = variants.reduce((sum: number, v: any) => sum + ((v as any)._count?.stockItems ?? 0), 0);
+  const minPrice = Math.min(...variants.map((v: any) => Number(v.price)));
 
   const msg =
     `🛍 *Product Details*\n\n` +
     `📦 *Product:* ${product.name}\n` +
     `📁 *Category:* ${categoryName}\n` +
-    `📊 *Available Items:* ${stockCount}\n` +
-    `💰 *Price:* Rs. ${priceStr} PKR\n\n` +
-    `📝 *Description:*\n${product.description || 'No description provided.'}`;
+    `📊 *Total Stock:* ${totalStock}\n` +
+    `💰 *Starting from:* Rs. ${minPrice.toFixed(0)} PKR\n\n` +
+    `📝 *Description:*\n${desc}\n\n` +
+    `👇 *Select your preferred plan / duration:*`;
 
-  const buyButton = stockCount > 0
-    ? Markup.button.callback(`💳 Buy Now (Rs. ${priceStr})`, `buy_var_${variantId}`)
-    : Markup.button.callback(`⚠️ Out of Stock (Rs. ${priceStr})`, 'buy_zero_item');
-
-  const keyboard = Markup.inlineKeyboard([
-    [buyButton],
-    [
-      Markup.button.callback('⬅️ Back to Store Categories', 'menu_store'),
-      Markup.button.callback('🏠 Home', 'menu_main'),
-    ],
-  ]);
-
-  await safeEditMessage(ctx, msg, keyboard);
+  await safeEditMessage(ctx, msg, getProductVariantsKeyboard(product, variants, backTarget));
 });
 
 // Buy zero item click handler
