@@ -47,4 +47,31 @@ describe('Caching & Performance Services', () => {
     expect(typeof ProductService.getVariantById).toBe('function');
     expect(typeof ProductService.getAvailableStockCount).toBe('function');
   });
+
+  it('BroadcastService handles dispatch gracefully with mock bot client', async () => {
+    const { BroadcastService } = await import('../src/services/broadcastService.js');
+    const sentMessages: any[] = [];
+    const mockBot = {
+      telegram: {
+        sendMessage: async (chatId: string, text: string) => {
+          sentMessages.push({ chatId, text });
+          return {};
+        },
+        sendPhoto: async (chatId: string, photo: string, extra: any) => {
+          sentMessages.push({ chatId, photo, extra });
+          return {};
+        },
+      },
+    };
+
+    const broadcast = await BroadcastService.sendBroadcast(
+      'admin-123',
+      'Test Broadcast *Bold* Announcement',
+      mockBot as any
+    );
+
+    expect(broadcast).toBeDefined();
+    expect(broadcast.status).toBe('COMPLETED');
+    expect(typeof broadcast.successCount).toBe('number');
+  }, 15000);
 });

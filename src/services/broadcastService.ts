@@ -8,7 +8,7 @@ export class BroadcastService {
   static async sendBroadcast(
     adminId: string,
     messageText: string,
-    bot: Telegraf<BotContext>,
+    bot: Telegraf<BotContext> | { telegram: any },
     fileId?: string
   ) {
     const users = await prisma.user.findMany({
@@ -19,7 +19,7 @@ export class BroadcastService {
     const broadcast = await prisma.broadcast.create({
       data: {
         adminId,
-        messageText,
+        messageText: messageText || '(Photo announcement)',
         fileId: fileId || null,
         targetCount: users.length,
         status: BroadcastStatus.PROCESSING,
@@ -29,44 +29,74 @@ export class BroadcastService {
     let successCount = 0;
     let failCount = 0;
 
-    // Async batch execution to prevent blocking
-    (async () => {
-      for (const user of users) {
-        try {
-          if (fileId) {
-            try {
-              await bot.telegram.sendPhoto(user.telegramId.toString(), fileId, { caption: messageText, parse_mode: 'Markdown' });
-            } catch {
-              await bot.telegram.sendPhoto(user.telegramId.toString(), fileId, { caption: messageText.replace(/[*_`\[\]]/g, '') }).catch(() => {});
+    // Send in batches of 10 concurrent requests with small delays to respect Telegram limits (30 msgs/sec)
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < users.length; i += BATCH_SIZE) {
+      const batch = users.slice(i, i + BATCH_SIZE);
+
+      await Promise.allSettled(
+        batch.map(async (user) => {
+          const targetId = user.telegramId.toString();
+          let sent = false;
+
+          try {
+            if (fileId) {
+              try {
+                await bot.telegram.sendPhoto(targetId, fileId, {
+                  caption: messageText || undefined,
+                  parse_mode: 'Markdown',
+                });
+                sent = true;
+              } catch (mdErr) {
+                // Fallback without Markdown
+                await bot.telegram.sendPhoto(targetId, fileId, {
+                  caption: messageText ? messageText.replace(/[*_`\[\]]/g, '') : undefined,
+                });
+                sent = true;
+              }
+            } else if (messageText) {
+              try {
+                await bot.telegram.sendMessage(targetId, messageText, { parse_mode: 'Markdown' });
+                sent = true;
+              } catch (mdErr) {
+                // Fallback without Markdown
+                await bot.telegram.sendMessage(targetId, messageText.replace(/[*_`\[\]]/g, ''));
+                sent = true;
+              }
             }
-          } else {
-            try {
-              await bot.telegram.sendMessage(user.telegramId.toString(), messageText, { parse_mode: 'Markdown' });
-            } catch {
-              await bot.telegram.sendMessage(user.telegramId.toString(), messageText.replace(/[*_`\[\]]/g, '')).catch(() => {});
+
+            if (sent) {
+              successCount++;
+            } else {
+              failCount++;
             }
+          } catch (err) {
+            failCount++;
           }
-          successCount++;
-        } catch (error) {
-          failCount++;
-        }
+        })
+      );
 
-        // Small delay to respect Telegram API rate limits (30 msgs/sec)
-        await new Promise((resolve) => setTimeout(resolve, 40));
+      if (i + BATCH_SIZE < users.length) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
       }
+    }
 
-      await prisma.broadcast.update({
-        where: { id: broadcast.id },
-        data: {
-          successCount,
-          failCount,
-          status: BroadcastStatus.COMPLETED,
-        },
-      });
+    const updated = await prisma.broadcast.update({
+      where: { id: broadcast.id },
+      data: {
+        successCount,
+        failCount,
+        status: BroadcastStatus.COMPLETED,
+      },
+    });
 
-      logger.info('Broadcast execution completed', { broadcastId: broadcast.id, successCount, failCount });
-    })();
+    logger.info('Broadcast execution completed', {
+      broadcastId: updated.id,
+      successCount,
+      failCount,
+      targetCount: users.length,
+    });
 
-    return broadcast;
+    return updated;
   }
 }

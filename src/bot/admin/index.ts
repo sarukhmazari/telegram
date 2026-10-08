@@ -1681,15 +1681,29 @@ adminComposer.action('admin_broadcast', async (ctx) => {
 
 // 🚀 Confirm & Dispatch Broadcast Action
 adminComposer.action('admin_confirm_broadcast', async (ctx) => {
-  const adminData = ctx.session?.adminData;
+  let adminData = ctx.session?.adminData;
+
+  // Fallback to database draft if serverless cold-start lost the in-memory session
+  if (!adminData || (!adminData.broadcastText && !adminData.fileId)) {
+    const draftJson = await SettingService.getSetting(`broadcast_draft_${ctx.from.id}`);
+    if (draftJson) {
+      try {
+        adminData = JSON.parse(draftJson);
+      } catch {}
+    }
+  }
+
   if (!adminData || (!adminData.broadcastText && !adminData.fileId)) {
     await ctx.answerCbQuery('⚠️ Broadcast message context lost. Please try again.', { show_alert: true }).catch(() => {});
     return;
   }
 
   const { broadcastText, fileId } = adminData;
-  ctx.session!.adminState = undefined;
-  ctx.session!.adminData = undefined;
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+  await SettingService.deleteSetting(`broadcast_draft_${ctx.from.id}`);
 
   await ctx.answerCbQuery('🚀 Sending broadcast to all users...').catch(() => {});
 
@@ -1701,9 +1715,11 @@ adminComposer.action('admin_confirm_broadcast', async (ctx) => {
   );
 
   const confirmMsg =
-    `🎉 *Broadcast Dispatched Successfully!*\n\n` +
-    `👥 *Target Audience:* ${broadcast.targetCount} customers\n` +
-    `⚡ Messages are being delivered in the background.`;
+    `🎉 *Broadcast Completed!*\n\n` +
+    `• *Total Target Audience:* ${broadcast.targetCount} customers\n` +
+    `• *Successfully Delivered:* ✅ ${broadcast.successCount}\n` +
+    (broadcast.failCount > 0 ? `• *Failed / Blocked:* ⚠️ ${broadcast.failCount}\n` : '') +
+    `• *Status:* Completed`;
 
   const keyboard = Markup.inlineKeyboard([[Markup.button.callback('⚙️ Admin Panel', 'admin_main')]]);
   await safeEditAdminMessage(ctx, confirmMsg, keyboard);
@@ -2924,6 +2940,13 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     if (!ctx.session) ctx.session = {};
     ctx.session.adminState = 'CONFIRM_BROADCAST';
     ctx.session.adminData = { broadcastText: text, fileId };
+
+    if (ctx.from?.id) {
+      await SettingService.setSetting(
+        `broadcast_draft_${ctx.from.id}`,
+        JSON.stringify({ broadcastText: text, fileId })
+      );
+    }
 
     const previewText =
       `📢 *Broadcast Preview & Confirmation*\n\n` +
