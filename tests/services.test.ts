@@ -74,4 +74,11 @@ describe('Caching & Performance Services', () => {
     expect(broadcast.status).toBe('COMPLETED');
     expect(typeof broadcast.successCount).toBe('number');
   }, 15000);
+
+  it('PushNotificationService has active topic King_of_Ai_Digital_Marketing and functions', async () => {
+    const { PushNotificationService } = await import('../src/services/pushNotificationService.js');
+    const topic = await PushNotificationService.getTopic();
+    expect(topic).toBe('King_of_Ai_Digital_Marketing');
+    expect(typeof PushNotificationService.sendPaymentAlert).toBe('function');
+  });
 });

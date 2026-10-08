@@ -53,6 +53,7 @@ const envSchema = z.object({
     .transform((val) => parseInt(val, 10))
     .default('3000'),
   LOG_LEVEL: z.string().trim().default('info'),
+  NTFY_TOPIC: z.string().trim().default('King_of_Ai_Digital_Marketing'),
 });
 
 export let configError: any = null;
@@ -84,6 +85,7 @@ if (!parsedEnv.success) {
     WEBHOOK_URL: process.env.WEBHOOK_URL,
     PORT: parseInt(process.env.PORT || '3000', 10),
     LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+    NTFY_TOPIC: process.env.NTFY_TOPIC || 'King_of_Ai_Digital_Marketing',
   };
 } else {
   validatedConfig = parsedEnv.data;

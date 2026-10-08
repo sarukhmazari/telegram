@@ -17,6 +17,7 @@ import { DeliveryService } from '../services/deliveryService.js';
 import { PaymentAccountService } from '../services/paymentAccountService.js';
 import { SettingService } from '../services/settingService.js';
 import { ReviewService } from '../services/reviewService.js';
+import { PushNotificationService } from '../services/pushNotificationService.js';
 import { prisma } from '../database/index.js';
 import { getPaymentReviewKeyboard } from './keyboards/admin.js';
 
@@ -1170,6 +1171,19 @@ bot.on(['text', 'photo'], async (ctx, next) => {
         logger.warn('Failed to send payment alert to admin', { adminId, adminErr });
       }
     }
+
+    // 📲 Trigger instant high-priority mobile push alert directly to admin's phone (Topic: King_of_Ai_Digital_Marketing)
+    const customerStr = user.username ? `@${user.username}` : (user.firstName || user.id);
+    await PushNotificationService.sendPaymentAlert({
+      orderNumber,
+      amount,
+      customer: customerStr,
+      provider: providerStr,
+      trxRef,
+      botUsername: ctx.botInfo?.username,
+    }).catch((pushErr) => {
+      logger.warn('Failed to send instant ntfy push notification', { err: pushErr?.message });
+    });
 
     return;
   }
