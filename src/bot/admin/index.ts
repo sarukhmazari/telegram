@@ -1261,6 +1261,124 @@ adminComposer.action(/^admin_assign_stock_(.+)$/, async (ctx) => {
   );
 });
 
+// 📋 Orders Management Screen
+adminComposer.action('admin_orders', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const totalOrders = await prisma.order.count();
+  const pendingOrders = await prisma.order.count({ where: { orderStatus: 'PENDING' } });
+  const completedOrders = await prisma.order.count({ where: { orderStatus: 'COMPLETED' } });
+
+  const msg =
+    `📋 *Order Management*\n\n` +
+    `• Total Orders: *${totalOrders}*\n` +
+    `• Pending Orders: *${pendingOrders}*\n` +
+    `• Completed Orders: *${completedOrders}*`;
+
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+  );
+});
+
+// 👥 Users Management Screen
+adminComposer.action('admin_users', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const totalUsers = await prisma.user.count();
+  const bannedUsers = await prisma.user.count({ where: { isBanned: true } });
+
+  const msg =
+    `👥 *Customer & User Management*\n\n` +
+    `• Total Registered Customers: *${totalUsers}*\n` +
+    `• Suspended/Banned Accounts: *${bannedUsers}*`;
+
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+  );
+});
+
+// 🎟 Coupons Screen
+adminComposer.action('admin_coupons', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const coupons = await prisma.coupon.findMany();
+  let text = `🎟 *Discount Coupons*\n\nActive Coupons (${coupons.length}):\n`;
+  if (coupons.length === 0) text += `No coupons created yet.`;
+  coupons.forEach((c) => {
+    text += `• \`${c.code}\` — ${c.discountType === 'PERCENTAGE' ? c.discountValue + '%' : 'Rs. ' + c.discountValue}\n`;
+  });
+
+  await safeEditAdminMessage(
+    ctx,
+    text,
+    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+  );
+});
+
+// 📢 Broadcast Screen — Prompt Admin for Broadcast Text/Photo
+adminComposer.action('admin_broadcast', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const userCount = await prisma.user.count({ where: { isBanned: false } });
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_BROADCAST_MESSAGE';
+
+  const msg =
+    `📢 *Customer Mass Broadcast*\n\n` +
+    `👥 *Total Reachable Customers:* *${userCount} users*\n\n` +
+    `Please reply directly to this chat with your *announcement text* or *photo with caption* to send to all registered bot users.\n\n` +
+    `_(Supports formatting like *bold*, _italic_, and line breaks)_`;
+
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]])
+  );
+});
+
+// 🚀 Confirm & Dispatch Broadcast Action
+adminComposer.action('admin_confirm_broadcast', async (ctx) => {
+  const adminData = ctx.session?.adminData;
+  if (!adminData || (!adminData.broadcastText && !adminData.fileId)) {
+    await ctx.answerCbQuery('⚠️ Broadcast message context lost. Please try again.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const { broadcastText, fileId } = adminData;
+  ctx.session!.adminState = undefined;
+  ctx.session!.adminData = undefined;
+
+  await ctx.answerCbQuery('🚀 Sending broadcast to all users...').catch(() => {});
+
+  const broadcast = await BroadcastService.sendBroadcast(
+    ctx.from.id.toString(),
+    broadcastText || '',
+    ctx as any,
+    fileId
+  );
+
+  const confirmMsg =
+    `🎉 *Broadcast Dispatched Successfully!*\n\n` +
+    `👥 *Target Audience:* ${broadcast.targetCount} customers\n` +
+    `⚡ Messages are being delivered in the background.`;
+
+  const keyboard = Markup.inlineKeyboard([[Markup.button.callback('⚙️ Admin Panel', 'admin_main')]]);
+  await safeEditAdminMessage(ctx, confirmMsg, keyboard);
+});
+
+// ⭐ Reviews Screen
+adminComposer.action('admin_reviews', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const totalReviews = await prisma.review.count();
+  const msg = `⭐ *Customer Reviews Moderation*\n\nTotal Product Reviews: *${totalReviews}*`;
+  await safeEditAdminMessage(
+    ctx,
+    msg,
+    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+  );
+});
+
 // 🤖 Bot Settings Screen
 adminComposer.action('admin_bot_settings', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});

@@ -34,9 +34,17 @@ export class BroadcastService {
       for (const user of users) {
         try {
           if (fileId) {
-            await bot.telegram.sendPhoto(user.telegramId.toString(), fileId, { caption: messageText, parse_mode: 'Markdown' });
+            try {
+              await bot.telegram.sendPhoto(user.telegramId.toString(), fileId, { caption: messageText, parse_mode: 'Markdown' });
+            } catch {
+              await bot.telegram.sendPhoto(user.telegramId.toString(), fileId, { caption: messageText.replace(/[*_`\[\]]/g, '') }).catch(() => {});
+            }
           } else {
-            await bot.telegram.sendMessage(user.telegramId.toString(), messageText, { parse_mode: 'Markdown' });
+            try {
+              await bot.telegram.sendMessage(user.telegramId.toString(), messageText, { parse_mode: 'Markdown' });
+            } catch {
+              await bot.telegram.sendMessage(user.telegramId.toString(), messageText.replace(/[*_`\[\]]/g, '')).catch(() => {});
+            }
           }
           successCount++;
         } catch (error) {
