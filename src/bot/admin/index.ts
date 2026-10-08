@@ -22,6 +22,15 @@ import {
   getRolesManagementKeyboard,
   getRoleAssignmentKeyboard,
   getPreAuthRoleKeyboard,
+  getAdminCouponsKeyboard,
+  getCouponDetailKeyboard,
+  getCouponDeleteConfirmKeyboard,
+  getAdminUsersKeyboard,
+  getUserDetailKeyboard,
+  getAdminOrdersKeyboard,
+  getOrderDetailKeyboard,
+  getAdminReviewsKeyboard,
+  getReviewDetailKeyboard,
 } from '../keyboards/admin.js';
 import { AdminService } from '../../services/adminService.js';
 import { ProductService } from '../../services/productService.js';
@@ -1264,55 +1273,388 @@ adminComposer.action(/^admin_assign_stock_(.+)$/, async (ctx) => {
 // 📋 Orders Management Screen
 adminComposer.action('admin_orders', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+
   const totalOrders = await prisma.order.count();
   const pendingOrders = await prisma.order.count({ where: { orderStatus: 'PENDING' } });
   const completedOrders = await prisma.order.count({ where: { orderStatus: 'COMPLETED' } });
 
+  const orders = await prisma.order.findMany({
+    orderBy: { createdAt: 'desc' },
+    include: { user: true, items: { include: { variant: true } } },
+    take: 20,
+  });
+
   const msg =
     `📋 *Order Management*\n\n` +
-    `• Total Orders: *${totalOrders}*\n` +
-    `• Pending Orders: *${pendingOrders}*\n` +
-    `• Completed Orders: *${completedOrders}*`;
+    `• *Total Orders:* ${totalOrders}\n` +
+    `• *Pending Orders:* ${pendingOrders}\n` +
+    `• *Completed Orders:* ${completedOrders}\n\n` +
+    `Showing latest orders below. Tap any order to view details:`;
 
-  await safeEditAdminMessage(
-    ctx,
-    msg,
-    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
-  );
+  await safeEditAdminMessage(ctx, msg, getAdminOrdersKeyboard(orders, 'ALL'));
+});
+
+// 📋 Orders Filter Action (ALL / PENDING / COMPLETED)
+adminComposer.action(/^admin_orders_filter_([A-Z]+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const filter = ctx.match[1];
+
+  let whereClause: any = {};
+  if (filter === 'PENDING') {
+    whereClause = { orderStatus: 'PENDING' };
+  } else if (filter === 'COMPLETED') {
+    whereClause = { orderStatus: 'COMPLETED' };
+  }
+
+  const orders = await prisma.order.findMany({
+    where: whereClause,
+    orderBy: { createdAt: 'desc' },
+    include: { user: true, items: { include: { variant: true } } },
+    take: 20,
+  });
+
+  const totalFiltered = await prisma.order.count({ where: whereClause });
+
+  const msg =
+    `📋 *Order Management (${filter})*\n\n` +
+    `Showing ${orders.length} of ${totalFiltered} orders with status *${filter}*:\n\n` +
+    `Tap any order below to view details:`;
+
+  await safeEditAdminMessage(ctx, msg, getAdminOrdersKeyboard(orders, filter));
+});
+
+// 📋 View Single Order Details
+adminComposer.action(/^admin_order_view_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const orderId = ctx.match[1];
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      user: true,
+      items: { include: { variant: { include: { product: true } } } },
+      payments: true,
+    },
+  });
+
+  if (!order) {
+    await ctx.answerCbQuery('Order not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const userDisplay = order.user.username ? `@${order.user.username}` : (order.user.firstName || order.user.telegramId.toString());
+  let itemsText = '';
+  order.items.forEach((item, i) => {
+    itemsText += `${i + 1}. *${item.variant.product.name}* (${item.variant.name}) × ${item.quantity} — Rs. ${Number(item.totalPrice).toFixed(2)}\n`;
+  });
+
+  const msg =
+    `📋 *Order Details #${order.orderNumber}*\n\n` +
+    `• *Customer:* ${userDisplay} (\`${order.user.telegramId.toString()}\`)\n` +
+    `• *Order Status:* *${order.orderStatus}*\n` +
+    `• *Payment Status:* *${order.paymentStatus}*\n` +
+    `• *Delivery Status:* *${order.deliveryStatus}*\n` +
+    `• *Total Amount:* *Rs. ${Number(order.totalAmount).toFixed(2)} PKR*\n` +
+    (Number(order.discountAmount) > 0 ? `• *Discount Applied:* Rs. ${Number(order.discountAmount).toFixed(2)}\n` : '') +
+    `• *Date:* ${new Date(order.createdAt).toLocaleString()}\n\n` +
+    `📦 *Purchased Items:*\n${itemsText || '_(None)_'}\n` +
+    (order.deliveryData ? `\n🔑 *Delivered Payload:*\n\`${order.deliveryData.substring(0, 80)}...\`\n` : '');
+
+  await safeEditAdminMessage(ctx, msg, getOrderDetailKeyboard(order));
 });
 
 // 👥 Users Management Screen
 adminComposer.action('admin_users', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+
   const totalUsers = await prisma.user.count();
   const bannedUsers = await prisma.user.count({ where: { isBanned: true } });
+  const staffUsers = await prisma.user.count({ where: { role: { in: ['ADMIN', 'OWNER'] } } });
+
+  const users = await prisma.user.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+  });
 
   const msg =
     `👥 *Customer & User Management*\n\n` +
-    `• Total Registered Customers: *${totalUsers}*\n` +
-    `• Suspended/Banned Accounts: *${bannedUsers}*`;
+    `• *Total Customers:* ${totalUsers}\n` +
+    `• *Staff Members:* ${staffUsers}\n` +
+    `• *Suspended/Banned Accounts:* ${bannedUsers}\n\n` +
+    `Showing latest 20 registered customers. Tap any user to manage:`;
+
+  await safeEditAdminMessage(ctx, msg, getAdminUsersKeyboard(users));
+});
+
+// 👥 View Single User Details
+adminComposer.action(/^admin_user_view_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+  const userId = ctx.match[1];
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      _count: { select: { orders: true, payments: true } },
+    },
+  });
+
+  if (!user) {
+    await ctx.answerCbQuery('User not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const userDisplay = user.username ? `@${user.username}` : (user.firstName || user.telegramId.toString());
+  const statusStr = user.isBanned ? '🚫 Banned / Suspended' : '✅ Active';
+
+  const msg =
+    `👤 *Customer Profile*\n\n` +
+    `• *Name/Username:* \`${userDisplay}\`\n` +
+    `• *Telegram ID:* \`${user.telegramId.toString()}\`\n` +
+    `• *Wallet Balance:* *Rs. ${Number(user.balance).toFixed(2)} PKR*\n` +
+    `• *Account Role:* *${user.role}*\n` +
+    `• *Status:* ${statusStr}\n` +
+    `• *Total Orders Placed:* ${user._count.orders}\n` +
+    `• *Total Payments Made:* ${user._count.payments}\n` +
+    `• *Joined:* ${new Date(user.createdAt).toLocaleDateString()}\n\n` +
+    `Select an action below:`;
+
+  await safeEditAdminMessage(ctx, msg, getUserDetailKeyboard(user));
+});
+
+// 🚫 / ✅ Toggle Ban on User
+adminComposer.action(/^admin_user_ban_toggle_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const userId = ctx.match[1];
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    await ctx.answerCbQuery('User not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { isBanned: !user.isBanned },
+  });
+
+  UserService.invalidateCache(Number(user.telegramId));
+  UserService.invalidateCache(user.id);
+
+  const alertText = updated.isBanned ? '🚫 User has been BANNED.' : '✅ User has been UNBANNED.';
+  await ctx.answerCbQuery(alertText, { show_alert: true }).catch(() => {});
+
+  const refreshedUser = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { _count: { select: { orders: true, payments: true } } },
+  });
+
+  if (!refreshedUser) return;
+
+  const userDisplay = refreshedUser.username ? `@${refreshedUser.username}` : (refreshedUser.firstName || refreshedUser.telegramId.toString());
+  const statusStr = refreshedUser.isBanned ? '🚫 Banned / Suspended' : '✅ Active';
+
+  const msg =
+    `👤 *Customer Profile*\n\n` +
+    `• *Name/Username:* \`${userDisplay}\`\n` +
+    `• *Telegram ID:* \`${refreshedUser.telegramId.toString()}\`\n` +
+    `• *Wallet Balance:* *Rs. ${Number(refreshedUser.balance).toFixed(2)} PKR*\n` +
+    `• *Account Role:* *${refreshedUser.role}*\n` +
+    `• *Status:* ${statusStr}\n` +
+    `• *Total Orders Placed:* ${refreshedUser._count.orders}\n` +
+    `• *Total Payments Made:* ${refreshedUser._count.payments}\n` +
+    `• *Joined:* ${new Date(refreshedUser.createdAt).toLocaleDateString()}\n\n` +
+    `Select an action below:`;
+
+  await safeEditAdminMessage(ctx, msg, getUserDetailKeyboard(refreshedUser));
+});
+
+// 💰 Adjust User Balance — Prompt
+adminComposer.action(/^admin_user_balance_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const userId = ctx.match[1];
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    await ctx.answerCbQuery('User not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_USER_BALANCE_ADJUST';
+  ctx.session.adminData = { userId, currentBalance: Number(user.balance), username: user.username || user.telegramId.toString() };
+
+  const promptMsg =
+    `💰 *Adjust Balance — ${user.username ? '@' + user.username : user.telegramId.toString()}*\n\n` +
+    `Current Balance: *Rs. ${Number(user.balance).toFixed(2)} PKR*\n\n` +
+    `Reply with the amount to add or set:\n` +
+    `• To add funds: \`+500\`\n` +
+    `• To deduct funds: \`-200\`\n` +
+    `• To set exact balance: \`1000\``;
 
   await safeEditAdminMessage(
     ctx,
-    msg,
-    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+    promptMsg,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', `admin_user_view_${userId}`)]])
   );
 });
 
-// 🎟 Coupons Screen
-adminComposer.action('admin_coupons', async (ctx) => {
+// 🔍 Search User by Username / ID — Prompt
+adminComposer.action('admin_user_search', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const coupons = await prisma.coupon.findMany();
-  let text = `🎟 *Discount Coupons*\n\nActive Coupons (${coupons.length}):\n`;
-  if (coupons.length === 0) text += `No coupons created yet.`;
-  coupons.forEach((c) => {
-    text += `• \`${c.code}\` — ${c.discountType === 'PERCENTAGE' ? c.discountValue + '%' : 'Rs. ' + c.discountValue}\n`;
-  });
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_USER_SEARCH_QUERY';
 
   await safeEditAdminMessage(
     ctx,
-    text,
-    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
+    `🔍 *Search Customer / User*\n\nPlease reply with the *Telegram @username* or numeric *Telegram ID*:\n\nExample: \`@zoxer19\` or \`8371873408\``,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_users')]])
+  );
+});
+
+// 🎟 Coupons Management Screen
+adminComposer.action('admin_coupons', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+
+  const coupons = await prisma.coupon.findMany({
+    orderBy: { createdAt: 'desc' },
+  });
+
+  let text = `🎟 *Discount Coupons Management*\n\nActive Coupons (${coupons.length}):\n`;
+  if (coupons.length === 0) text += `_No discount coupons created yet. Press "➕ Create New Coupon" below._\n`;
+
+  await safeEditAdminMessage(ctx, text, getAdminCouponsKeyboard(coupons));
+});
+
+// 🎟 View Single Coupon Details
+adminComposer.action(/^admin_coupon_view_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const couponId = ctx.match[1];
+  const coupon = await prisma.coupon.findUnique({
+    where: { id: couponId },
+  });
+
+  if (!coupon) {
+    await ctx.answerCbQuery('Coupon not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const statusStr = coupon.isEnabled ? '✅ Enabled (Usable by customers)' : '⏸ Disabled';
+  const valStr = coupon.discountType === 'PERCENTAGE' ? `${coupon.discountValue}% OFF` : `Rs. ${Number(coupon.discountValue).toFixed(2)} PKR OFF`;
+  const minOrderStr = coupon.minOrderAmount ? `Rs. ${Number(coupon.minOrderAmount).toFixed(2)} PKR` : 'No minimum';
+
+  const msg =
+    `🎟 *Coupon Details — \`${coupon.code}\`*\n\n` +
+    `• *Code:* \`${coupon.code}\`\n` +
+    `• *Discount:* *${valStr}*\n` +
+    `• *Minimum Order:* ${minOrderStr}\n` +
+    `• *Total Times Used:* ${coupon.usageCount} times\n` +
+    `• *Status:* ${statusStr}\n` +
+    `• *Created:* ${new Date(coupon.createdAt).toLocaleDateString()}\n\n` +
+    `Select an option below:`;
+
+  await safeEditAdminMessage(ctx, msg, getCouponDetailKeyboard(coupon));
+});
+
+// 🔄 Toggle Coupon Status
+adminComposer.action(/^admin_coupon_toggle_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const couponId = ctx.match[1];
+  const coupon = await prisma.coupon.findUnique({ where: { id: couponId } });
+  if (!coupon) return;
+
+  const updated = await prisma.coupon.update({
+    where: { id: couponId },
+    data: { isEnabled: !coupon.isEnabled },
+  });
+
+  await ctx.answerCbQuery(updated.isEnabled ? '✅ Coupon Enabled!' : '⏸ Coupon Disabled!').catch(() => {});
+
+  const statusStr = updated.isEnabled ? '✅ Enabled (Usable by customers)' : '⏸ Disabled';
+  const valStr = updated.discountType === 'PERCENTAGE' ? `${updated.discountValue}% OFF` : `Rs. ${Number(updated.discountValue).toFixed(2)} PKR OFF`;
+  const minOrderStr = updated.minOrderAmount ? `Rs. ${Number(updated.minOrderAmount).toFixed(2)} PKR` : 'No minimum';
+
+  const msg =
+    `🎟 *Coupon Details — \`${updated.code}\`*\n\n` +
+    `• *Code:* \`${updated.code}\`\n` +
+    `• *Discount:* *${valStr}*\n` +
+    `• *Minimum Order:* ${minOrderStr}\n` +
+    `• *Total Times Used:* ${updated.usageCount} times\n` +
+    `• *Status:* ${statusStr}\n` +
+    `• *Created:* ${new Date(updated.createdAt).toLocaleDateString()}\n\n` +
+    `Select an option below:`;
+
+  await safeEditAdminMessage(ctx, msg, getCouponDetailKeyboard(updated));
+});
+
+// 🗑 Confirm Coupon Deletion
+adminComposer.action(/^admin_coupon_del_confirm_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const couponId = ctx.match[1];
+  const coupon = await prisma.coupon.findUnique({ where: { id: couponId } });
+  if (!coupon) return;
+
+  const msg =
+    `⚠️ *Confirm Coupon Deletion*\n\n` +
+    `Are you sure you want to delete coupon *\`${coupon.code}\`*?`;
+
+  await safeEditAdminMessage(ctx, msg, getCouponDeleteConfirmKeyboard(couponId));
+});
+
+// 🗑 Execute Coupon Deletion
+adminComposer.action(/^admin_coupon_delete_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const couponId = ctx.match[1];
+  await prisma.coupon.delete({ where: { id: couponId } }).catch(() => {});
+
+  await ctx.answerCbQuery('🗑 Coupon deleted.', { show_alert: true }).catch(() => {});
+
+  const coupons = await prisma.coupon.findMany({ orderBy: { createdAt: 'desc' } });
+  let text = `🎟 *Discount Coupons Management*\n\nActive Coupons (${coupons.length}):\n`;
+  if (coupons.length === 0) text += `_No discount coupons created yet._\n`;
+
+  await safeEditAdminMessage(ctx, text, getAdminCouponsKeyboard(coupons));
+});
+
+// ➕ Add New Coupon Wizard — Step 1: Code
+adminComposer.action('admin_coupon_add', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_NEW_COUPON_CODE';
+  ctx.session.adminData = {};
+
+  await safeEditAdminMessage(
+    ctx,
+    `➕ *Create New Coupon (Step 1/3)*\n\nReply with the *Coupon Code* (e.g. \`DISCOUNT20\` or \`WELCOME50\`):`,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_coupons')]])
+  );
+});
+
+// ➕ Add New Coupon — Step 2: Choose Discount Type (Action)
+adminComposer.action(/^admin_new_coupon_type_([A-Z]+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const type = ctx.match[1];
+  if (!ctx.session?.adminData) ctx.session = { adminData: {} };
+
+  ctx.session.adminData.discountType = type;
+  ctx.session.adminState = 'AWAITING_NEW_COUPON_VAL';
+
+  const typeStr = type === 'PERCENTAGE' ? 'Percentage % (e.g. `20` for 20% off)' : 'Fixed PKR Amount (e.g. `500` for Rs. 500 off)';
+  await safeEditAdminMessage(
+    ctx,
+    `➕ *Create New Coupon (Step 3/3)*\n\nCode: *\`${ctx.session.adminData.code}\`*\nDiscount Type: *${type}*\n\nReply with the *Discount Value*:\n${typeStr}`,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_coupons')]])
   );
 });
 
@@ -1367,16 +1709,116 @@ adminComposer.action('admin_confirm_broadcast', async (ctx) => {
   await safeEditAdminMessage(ctx, confirmMsg, keyboard);
 });
 
-// ⭐ Reviews Screen
+// ⭐ Reviews Management Screen
 adminComposer.action('admin_reviews', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+
   const totalReviews = await prisma.review.count();
-  const msg = `⭐ *Customer Reviews Moderation*\n\nTotal Product Reviews: *${totalReviews}*`;
-  await safeEditAdminMessage(
-    ctx,
-    msg,
-    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
-  );
+  const reviews = await prisma.review.findMany({
+    orderBy: { createdAt: 'desc' },
+    include: { product: true, user: true },
+    take: 20,
+  });
+
+  const msg =
+    `⭐ *Customer Reviews Moderation*\n\n` +
+    `• *Total Product Reviews:* ${totalReviews}\n\n` +
+    (reviews.length === 0 ? `_No customer reviews submitted yet._` : `Tap any review below to view and moderate:`);
+
+  await safeEditAdminMessage(ctx, msg, getAdminReviewsKeyboard(reviews));
+});
+
+// ⭐ View Single Review Details
+adminComposer.action(/^admin_review_view_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const reviewId = ctx.match[1];
+  const review = await prisma.review.findUnique({
+    where: { id: reviewId },
+    include: { product: true, user: true, order: true },
+  });
+
+  if (!review) {
+    await ctx.answerCbQuery('Review not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const userDisplay = review.user.username ? `@${review.user.username}` : (review.user.firstName || review.user.telegramId.toString());
+  const stars = '⭐'.repeat(Math.max(1, Math.min(5, review.rating)));
+
+  const msg =
+    `⭐ *Review Details*\n\n` +
+    `• *Product:* ${review.product?.name || 'Product'}\n` +
+    `• *Customer:* ${userDisplay}\n` +
+    `• *Order Number:* #${review.order?.orderNumber || 'N/A'}\n` +
+    `• *Rating:* ${stars} (${review.rating}/5)\n` +
+    `• *Status:* ${review.isApproved ? '✅ Approved & Visible' : '⏸ Hidden'}\n` +
+    `• *Comment:*\n"${review.comment || '_(No text comment)_'}"\n\n` +
+    `• *Date:* ${new Date(review.createdAt).toLocaleString()}`;
+
+  await safeEditAdminMessage(ctx, msg, getReviewDetailKeyboard(review));
+});
+
+// 🔄 Toggle Review Approved Status
+adminComposer.action(/^admin_review_toggle_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const reviewId = ctx.match[1];
+  const review = await prisma.review.findUnique({ where: { id: reviewId } });
+  if (!review) return;
+
+  const updated = await prisma.review.update({
+    where: { id: reviewId },
+    data: { isApproved: !review.isApproved },
+  });
+
+  await ctx.answerCbQuery(updated.isApproved ? '✅ Review Approved!' : '⏸ Review Hidden!').catch(() => {});
+
+  const refreshed = await prisma.review.findUnique({
+    where: { id: reviewId },
+    include: { product: true, user: true, order: true },
+  });
+  if (!refreshed) return;
+
+  const userDisplay = refreshed.user.username ? `@${refreshed.user.username}` : (refreshed.user.firstName || refreshed.user.telegramId.toString());
+  const stars = '⭐'.repeat(Math.max(1, Math.min(5, refreshed.rating)));
+
+  const msg =
+    `⭐ *Review Details*\n\n` +
+    `• *Product:* ${refreshed.product?.name || 'Product'}\n` +
+    `• *Customer:* ${userDisplay}\n` +
+    `• *Order Number:* #${refreshed.order?.orderNumber || 'N/A'}\n` +
+    `• *Rating:* ${stars} (${refreshed.rating}/5)\n` +
+    `• *Status:* ${refreshed.isApproved ? '✅ Approved & Visible' : '⏸ Hidden'}\n` +
+    `• *Comment:*\n"${refreshed.comment || '_(No text comment)_'}"\n\n` +
+    `• *Date:* ${new Date(refreshed.createdAt).toLocaleString()}`;
+
+  await safeEditAdminMessage(ctx, msg, getReviewDetailKeyboard(refreshed));
+});
+
+// 🗑 Delete Review
+adminComposer.action(/^admin_review_delete_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const reviewId = ctx.match[1];
+  await prisma.review.delete({ where: { id: reviewId } }).catch(() => {});
+
+  await ctx.answerCbQuery('🗑 Review deleted.', { show_alert: true }).catch(() => {});
+
+  const totalReviews = await prisma.review.count();
+  const reviews = await prisma.review.findMany({
+    orderBy: { createdAt: 'desc' },
+    include: { product: true, user: true },
+    take: 20,
+  });
+
+  const msg =
+    `⭐ *Customer Reviews Moderation*\n\n` +
+    `• *Total Product Reviews:* ${totalReviews}\n\n` +
+    (reviews.length === 0 ? `_No customer reviews submitted yet._` : `Tap any review below to view and moderate:`);
+
+  await safeEditAdminMessage(ctx, msg, getAdminReviewsKeyboard(reviews));
 });
 
 // 🤖 Bot Settings Screen
@@ -2214,6 +2656,259 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
       parse_mode: 'Markdown',
       reply_markup: getRoleAssignmentKeyboard(foundUser.id).reply_markup,
     });
+    return;
+  }
+
+  // 🔍 User Management — Search User Query
+  if (state === 'AWAITING_USER_SEARCH_QUERY') {
+    if (!text) {
+      await ctx.reply('⚠️ Please reply with a valid @username or numeric Telegram ID.');
+      return;
+    }
+
+    const foundUser = await UserService.findUserByUsernameOrId(text);
+    if (!foundUser) {
+      await ctx.reply(
+        `⚠️ No customer found with \`${text}\`.\n\nPlease check the username or Telegram ID and try again, or click Cancel:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_users')]]).reply_markup,
+        }
+      );
+      return;
+    }
+
+    ctx.session!.adminState = undefined;
+    ctx.session!.adminData = undefined;
+
+    const fullUser = await prisma.user.findUnique({
+      where: { id: foundUser.id },
+      include: { _count: { select: { orders: true, payments: true } } },
+    });
+
+    if (!fullUser) {
+      await ctx.reply('⚠️ Customer not found.');
+      return;
+    }
+
+    const userDisplay = fullUser.username ? `@${fullUser.username}` : (fullUser.firstName || fullUser.telegramId.toString());
+    const statusStr = fullUser.isBanned ? '🚫 Banned / Suspended' : '✅ Active';
+
+    const msg =
+      `👤 *Customer Profile*\n\n` +
+      `• *Name/Username:* \`${userDisplay}\`\n` +
+      `• *Telegram ID:* \`${fullUser.telegramId.toString()}\`\n` +
+      `• *Wallet Balance:* *Rs. ${Number(fullUser.balance).toFixed(2)} PKR*\n` +
+      `• *Account Role:* *${fullUser.role}*\n` +
+      `• *Status:* ${statusStr}\n` +
+      `• *Total Orders Placed:* ${fullUser._count.orders}\n` +
+      `• *Total Payments Made:* ${fullUser._count.payments}\n` +
+      `• *Joined:* ${new Date(fullUser.createdAt).toLocaleDateString()}\n\n` +
+      `Select an action below:`;
+
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: getUserDetailKeyboard(fullUser).reply_markup,
+    });
+    return;
+  }
+
+  // 💰 User Management — Adjust Balance
+  if (state === 'AWAITING_USER_BALANCE_ADJUST' && adminData.userId) {
+    const { userId, currentBalance } = adminData;
+    const cleanText = text.trim();
+
+    let targetBalance: number;
+    let delta = 0;
+
+    if (cleanText.startsWith('+')) {
+      const val = parseFloat(cleanText.replace('+', '').trim());
+      if (isNaN(val) || val <= 0) {
+        await ctx.reply('⚠️ Invalid amount. Example to add funds: `+500`', { parse_mode: 'Markdown' });
+        return;
+      }
+      delta = val;
+      targetBalance = currentBalance + delta;
+    } else if (cleanText.startsWith('-')) {
+      const val = parseFloat(cleanText.replace('-', '').trim());
+      if (isNaN(val) || val <= 0) {
+        await ctx.reply('⚠️ Invalid amount. Example to deduct funds: `-200`', { parse_mode: 'Markdown' });
+        return;
+      }
+      delta = -val;
+      targetBalance = Math.max(0, currentBalance + delta);
+    } else {
+      const val = parseFloat(cleanText);
+      if (isNaN(val) || val < 0) {
+        await ctx.reply('⚠️ Invalid balance. Enter a non-negative number (e.g. `1000` or `+500`):', { parse_mode: 'Markdown' });
+        return;
+      }
+      targetBalance = val;
+      delta = targetBalance - currentBalance;
+    }
+
+    try {
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: { balance: targetBalance },
+        include: { _count: { select: { orders: true, payments: true } } },
+      });
+
+      if (delta !== 0) {
+        await prisma.walletTransaction.create({
+          data: {
+            userId,
+            amount: Math.abs(delta),
+            type: delta > 0 ? 'ADMIN_CREDIT' : 'ADMIN_DEBIT',
+            balanceAfter: targetBalance,
+            description: `Admin balance adjustment (${delta > 0 ? '+' : ''}${delta.toFixed(2)} PKR)`,
+          },
+        });
+      }
+
+      UserService.invalidateCache(Number(updatedUser.telegramId));
+      UserService.invalidateCache(updatedUser.id);
+
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+
+      const userDisplay = updatedUser.username ? `@${updatedUser.username}` : (updatedUser.firstName || updatedUser.telegramId.toString());
+
+      await ctx.reply(
+        `🎉 *Balance updated successfully!*\n\n` +
+        `👤 *Customer:* \`${userDisplay}\`\n` +
+        `💰 *New Balance:* *Rs. ${Number(updatedUser.balance).toFixed(2)} PKR* (${delta >= 0 ? '+' : ''}${delta.toFixed(2)} PKR)`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: getUserDetailKeyboard(updatedUser).reply_markup,
+        }
+      );
+    } catch (err: any) {
+      logger.error('Failed to adjust user balance', { error: err.message, userId });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to adjust balance: ${err.message}`);
+    }
+    return;
+  }
+
+  // 🎟 Coupon Creation Wizard — Step 1: Code -> Step 2: Discount Type
+  if (state === 'AWAITING_NEW_COUPON_CODE') {
+    const code = text.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    if (!code || code.length < 2 || code.length > 30) {
+      await ctx.reply('⚠️ Coupon code must be between 2 and 30 alphanumeric characters (e.g. `DISCOUNT20` or `WELCOME50`):');
+      return;
+    }
+
+    const existing = await prisma.coupon.findUnique({ where: { code } });
+    if (existing) {
+      await ctx.reply(`⚠️ Coupon code *\`${code}\`* already exists. Please choose a different code:`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (!ctx.session) ctx.session = {};
+    ctx.session.adminData = { code };
+    ctx.session.adminState = 'AWAITING_NEW_COUPON_TYPE';
+
+    const typeKeyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('📊 Percentage (%) Off', 'admin_new_coupon_type_PERCENTAGE'),
+        Markup.button.callback('💵 Fixed PKR Amount Off', 'admin_new_coupon_type_FIXED'),
+      ],
+      [Markup.button.callback('❌ Cancel', 'admin_coupons')],
+    ]);
+
+    await ctx.reply(
+      `✅ Coupon Code: *\`${code}\`*\n\n*(Step 2/3)* Choose the *Discount Type*:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: typeKeyboard.reply_markup,
+      }
+    );
+    return;
+  }
+
+  // 🎟 Coupon Creation Wizard — Step 3: Value -> Step 4: Min Order Amount
+  if (state === 'AWAITING_NEW_COUPON_VAL' && adminData.code && adminData.discountType) {
+    const cleanVal = text.replace(/,/g, '').replace(/[^0-9.]/g, '');
+    const numVal = parseFloat(cleanVal);
+
+    if (isNaN(numVal) || numVal <= 0) {
+      await ctx.reply('⚠️ Please enter a valid positive number for the discount value (e.g. `20` or `500`):');
+      return;
+    }
+
+    if (adminData.discountType === 'PERCENTAGE' && (numVal < 1 || numVal > 100)) {
+      await ctx.reply('⚠️ Percentage discount must be between 1% and 100%. Please try again:');
+      return;
+    }
+
+    adminData.discountValue = numVal;
+    ctx.session!.adminData = adminData;
+    ctx.session!.adminState = 'AWAITING_NEW_COUPON_MIN';
+
+    const valDisplay = adminData.discountType === 'PERCENTAGE' ? `${numVal}% OFF` : `Rs. ${numVal.toFixed(2)} PKR OFF`;
+    await ctx.reply(
+      `✅ Discount Value: *${valDisplay}*\n\n*(Final Step)* Reply with the *Minimum Order Amount in PKR* to use this coupon (e.g. \`1000\`), or type \`skip\` for no minimum requirement:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_coupons')]]).reply_markup,
+      }
+    );
+    return;
+  }
+
+  // 🎟 Coupon Creation Wizard — Step 4: Min Order -> Create Coupon in Database!
+  if (state === 'AWAITING_NEW_COUPON_MIN' && adminData.code && adminData.discountType && adminData.discountValue) {
+    let minOrderAmount: number | null = null;
+    if (text.toLowerCase() !== 'skip') {
+      const cleanMin = text.replace(/,/g, '').replace(/[^0-9.]/g, '');
+      const parsedMin = parseFloat(cleanMin);
+      if (isNaN(parsedMin) || parsedMin < 0) {
+        await ctx.reply('⚠️ Invalid amount. Please enter a valid number (e.g. `1000`) or type `skip`:');
+        return;
+      }
+      minOrderAmount = parsedMin;
+    }
+
+    const { code, discountType, discountValue } = adminData;
+
+    try {
+      const created = await prisma.coupon.create({
+        data: {
+          code,
+          discountType: discountType as any,
+          discountValue,
+          minOrderAmount,
+          isEnabled: true,
+        },
+      });
+
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+
+      const valStr = created.discountType === 'PERCENTAGE' ? `${created.discountValue}% OFF` : `Rs. ${Number(created.discountValue).toFixed(2)} PKR OFF`;
+      const minStr = created.minOrderAmount ? `Rs. ${Number(created.minOrderAmount).toFixed(2)} PKR` : 'No minimum';
+
+      await ctx.reply(
+        `🎉 *Discount Coupon Created Successfully!*\n\n` +
+        `• *Code:* \`${created.code}\`\n` +
+        `• *Discount:* *${valStr}*\n` +
+        `• *Minimum Order:* ${minStr}\n` +
+        `• *Status:* ✅ Enabled & Active`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: getCouponDetailKeyboard(created).reply_markup,
+        }
+      );
+    } catch (err: any) {
+      logger.error('Failed to create coupon', { error: err.message, adminData });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to create coupon: ${err.message}`, {
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Coupons', 'admin_coupons')]]).reply_markup,
+      });
+    }
     return;
   }
 

@@ -336,3 +336,137 @@ export function getPaymentReviewKeyboard(paymentId: string) {
     [Markup.button.callback('⬅️ Back to Payments', 'admin_payments')],
   ]);
 }
+
+export function getAdminCouponsKeyboard(coupons: any[]) {
+  const buttons: any[] = [];
+
+  if (coupons && coupons.length > 0) {
+    coupons.forEach((c) => {
+      const statusIcon = c.isEnabled ? '✅' : '⏸';
+      const valStr = c.discountType === 'PERCENTAGE' ? `${c.discountValue}% OFF` : `Rs. ${Number(c.discountValue).toFixed(0)} OFF`;
+      buttons.push([
+        Markup.button.callback(`${statusIcon} ${c.code} — ${valStr} (${c.usageCount} uses)`, `admin_coupon_view_${c.id}`),
+      ]);
+    });
+  }
+
+  buttons.push([Markup.button.callback('➕ Create New Coupon', 'admin_coupon_add')]);
+  buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getCouponDetailKeyboard(coupon: any) {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        coupon.isEnabled ? '⏸ Disable Coupon' : '✅ Enable Coupon',
+        `admin_coupon_toggle_${coupon.id}`
+      ),
+      Markup.button.callback('🗑 Delete Coupon', `admin_coupon_del_confirm_${coupon.id}`),
+    ],
+    [Markup.button.callback('⬅️ Back to Coupons', 'admin_coupons')],
+  ]);
+}
+
+export function getCouponDeleteConfirmKeyboard(couponId: string) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('⚠️ Yes, Delete Coupon', `admin_coupon_delete_${couponId}`)],
+    [Markup.button.callback('❌ Cancel', `admin_coupon_view_${couponId}`)],
+  ]);
+}
+
+export function getAdminUsersKeyboard(users: any[]) {
+  const buttons: any[] = [];
+
+  if (users && users.length > 0) {
+    users.forEach((u) => {
+      const icon = u.isBanned ? '🚫' : (u.role === 'OWNER' ? '👑' : (u.role === 'ADMIN' ? '🛡' : '👤'));
+      const nameStr = u.username ? `@${u.username}` : (u.firstName || u.telegramId.toString());
+      const balanceStr = `Rs. ${Number(u.balance).toFixed(0)}`;
+      buttons.push([
+        Markup.button.callback(`${icon} ${nameStr} (${balanceStr})`, `admin_user_view_${u.id}`),
+      ]);
+    });
+  }
+
+  buttons.push([Markup.button.callback('🔍 Search User by Username / ID', 'admin_user_search')]);
+  buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getUserDetailKeyboard(user: any) {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('💰 Adjust Balance (+ / -)', `admin_user_balance_${user.id}`),
+      Markup.button.callback(
+        user.isBanned ? '✅ Unban Customer' : '🚫 Ban Customer',
+        `admin_user_ban_toggle_${user.id}`
+      ),
+    ],
+    [Markup.button.callback(`🛡 Staff Role [${user.role}]`, `admin_roles_view_${user.id}`)],
+    [Markup.button.callback('⬅️ Back to Users', 'admin_users')],
+  ]);
+}
+
+export function getAdminOrdersKeyboard(orders: any[], filter: string = 'ALL') {
+  const buttons: any[] = [];
+
+  buttons.push([
+    Markup.button.callback(filter === 'ALL' ? '🔘 All' : 'All', 'admin_orders_filter_ALL'),
+    Markup.button.callback(filter === 'PENDING' ? '🔘 Pending' : 'Pending', 'admin_orders_filter_PENDING'),
+    Markup.button.callback(filter === 'COMPLETED' ? '🔘 Completed' : 'Completed', 'admin_orders_filter_COMPLETED'),
+  ]);
+
+  if (orders && orders.length > 0) {
+    orders.forEach((o) => {
+      const statusIcon = o.orderStatus === 'COMPLETED' || o.orderStatus === 'DELIVERED' ? '✅' : (o.orderStatus === 'CANCELLED' ? '❌' : '⏳');
+      const userStr = o.user?.username ? `@${o.user.username}` : (o.user?.firstName || 'User');
+      buttons.push([
+        Markup.button.callback(`${statusIcon} #${o.orderNumber} — Rs. ${Number(o.totalAmount).toFixed(0)} (${userStr})`, `admin_order_view_${o.id}`),
+      ]);
+    });
+  }
+
+  buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getOrderDetailKeyboard(order: any) {
+  const buttons: any[] = [];
+  if (order.paymentStatus === 'WAITING_FOR_VERIFICATION') {
+    buttons.push([Markup.button.callback('💳 Verify Payment', 'admin_payments')]);
+  }
+  buttons.push([Markup.button.callback('⬅️ Back to Orders', 'admin_orders')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getAdminReviewsKeyboard(reviews: any[]) {
+  const buttons: any[] = [];
+
+  if (reviews && reviews.length > 0) {
+    reviews.forEach((r) => {
+      const stars = '⭐'.repeat(Math.max(1, Math.min(5, r.rating)));
+      const prodName = r.product?.name ? r.product.name.substring(0, 15) : 'Product';
+      const userStr = r.user?.username ? `@${r.user.username}` : (r.user?.firstName || 'User');
+      buttons.push([
+        Markup.button.callback(`${stars} [${prodName}] ${userStr}`, `admin_review_view_${r.id}`),
+      ]);
+    });
+  }
+
+  buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getReviewDetailKeyboard(review: any) {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        review.isApproved ? '⏸ Hide Review' : '✅ Approve Review',
+        `admin_review_toggle_${review.id}`
+      ),
+      Markup.button.callback('🗑 Delete Review', `admin_review_delete_${review.id}`),
+    ],
+    [Markup.button.callback('⬅️ Back to Reviews', 'admin_reviews')],
+  ]);
+}
