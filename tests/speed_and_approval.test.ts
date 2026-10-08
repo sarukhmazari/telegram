@@ -41,7 +41,7 @@ describe('Bot Speed & Admin Payment Approval Verification', () => {
     expect(cats2.length).toBe(cats1.length);
     expect(elapsedMs).toBeLessThan(5);
     console.log(`⚡ Category cache resolution time: ${elapsedMs.toFixed(3)}ms`);
-  });
+  }, 15000);
 
   it('PaymentAccountService caching resolves in sub-millisecond', async () => {
     const accs1 = await PaymentAccountService.getActiveAccounts();

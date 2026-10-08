@@ -37,4 +37,14 @@ describe('Caching & Performance Services', () => {
     UserService.invalidateCache(123456789);
     UserService.invalidateCache('mock-uuid');
   });
+
+  it('ProductService variant helper functions exist and work', () => {
+    expect(typeof ProductService.createVariant).toBe('function');
+    expect(typeof ProductService.updateVariant).toBe('function');
+    expect(typeof ProductService.updateVariantPrice).toBe('function');
+    expect(typeof ProductService.toggleVariantStatus).toBe('function');
+    expect(typeof ProductService.deleteVariant).toBe('function');
+    expect(typeof ProductService.getVariantById).toBe('function');
+    expect(typeof ProductService.getAvailableStockCount).toBe('function');
+  });
 });

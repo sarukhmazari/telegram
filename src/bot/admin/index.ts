@@ -7,6 +7,12 @@ import {
   getAdminProductsKeyboard,
   getProductDetailKeyboard,
   getProductDeleteConfirmKeyboard,
+  getAdminProductVariantsKeyboard,
+  getAdminVariantDetailKeyboard,
+  getVariantDeleteConfirmKeyboard,
+  getSelectVariantForStockKeyboard,
+  getAdminStockProductsKeyboard,
+  getAdminStockProductPlansKeyboard,
   getAdminCategoriesKeyboard,
   getCategoryDetailKeyboard,
   getCategoryDeleteConfirmKeyboard,
@@ -140,22 +146,49 @@ adminComposer.action('admin_dashboard', async (ctx) => {
 // 📦 Products Management Screen
 adminComposer.action('admin_products', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
   const products = await prisma.product.findMany({
     orderBy: { createdAt: 'desc' },
-    include: { category: true, variants: true },
+    include: {
+      category: true,
+      variants: {
+        include: {
+          _count: {
+            select: { stockItems: { where: { isSold: false, lockedAt: null } } },
+          },
+        },
+      },
+    },
     take: 30,
   });
-  const msg = `📦 *Product Management*\n\nTap any product below to edit price, add stock, enable/disable, or delete it.\nTotal Products: ${products.length}`;
+  const msg = `📦 *Product Management*\n\nTap any product below to manage sub-categories / plans, pricing, stock, enable/disable, or delete it.\nTotal Products: ${products.length}`;
   await safeEditAdminMessage(ctx, msg, getAdminProductsKeyboard(products));
 });
 
 // 📦 View Product Details
 adminComposer.action(/^admin_prod_view_(.+)$/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
   const prodId = ctx.match[1];
   const product = await prisma.product.findUnique({
     where: { id: prodId },
-    include: { category: true, variants: true },
+    include: {
+      category: true,
+      variants: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          _count: {
+            select: { stockItems: { where: { isSold: false, lockedAt: null } } },
+          },
+        },
+      },
+    },
   });
 
   if (!product) {
@@ -163,21 +196,433 @@ adminComposer.action(/^admin_prod_view_(.+)$/, async (ctx) => {
     return;
   }
 
-  const variant = product.variants[0];
-  const stockCount = variant ? await ProductService.getAvailableStockCount(variant.id) : 0;
+  const variants = product.variants || [];
+  const totalStock = variants.reduce(
+    (sum, v) => sum + (v._count?.stockItems ?? 0),
+    0
+  );
   const statusStr = product.status === 'ACTIVE' ? '✅ Active (Shown in Store)' : '⏸ Disabled (Hidden)';
+
+  let plansText = '';
+  if (variants.length === 0) {
+    plansText = `⚠️ _No sub-categories or plans added yet. Press "➕ Add Sub-Category" below._\n`;
+  } else {
+    plansText = `*Sub-Categories / Plans (${variants.length}):*\n`;
+    variants.forEach((v, idx) => {
+      const vStatus = v.isEnabled ? '✅' : '⏸';
+      const durationStr = v.duration ? ` [${v.duration}]` : '';
+      const deliveryStr = v.deliveryType === 'AUTOMATIC' ? '⚡ Auto' : '🖐 Manual';
+      plansText += `${idx + 1}. ${vStatus} *${v.name}* — Rs. ${Number(v.price).toFixed(2)} PKR${durationStr} (Stock: ${v._count?.stockItems ?? 0} | ${deliveryStr})\n`;
+    });
+  }
 
   const msg =
     `📦 *Product Details*\n\n` +
     `• *Name:* ${product.name}\n` +
     `• *Category:* ${product.category?.name || 'N/A'}\n` +
-    `• *Price:* Rs. ${variant ? Number(variant.price).toFixed(2) : '0.00'} PKR\n` +
-    `• *Stock Available:* ${stockCount} items\n` +
+    `• *Total Live Stock:* *${totalStock} items*\n` +
     `• *Status:* ${statusStr}\n` +
     `• *Description:* ${product.description || 'N/A'}\n\n` +
-    `Select an option below:`;
+    `${plansText}\n` +
+    `Select an action below:`;
 
   await safeEditAdminMessage(ctx, msg, getProductDetailKeyboard(product));
+});
+
+// 🗂 View All Sub-Categories / Plans of a Product
+adminComposer.action(/^admin_prod_vars_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+  const prodId = ctx.match[1];
+  const product = await prisma.product.findUnique({
+    where: { id: prodId },
+    include: {
+      category: true,
+      variants: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          _count: {
+            select: { stockItems: { where: { isSold: false, lockedAt: null } } },
+          },
+        },
+      },
+    },
+  });
+
+  if (!product) {
+    await ctx.answerCbQuery('Product not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const variants = product.variants || [];
+  const msg =
+    `🗂 *Sub-Categories & Plans — ${product.name}*\n\n` +
+    `Manage pricing, warranties, delivery types, and stock for each plan.\n` +
+    `Tap any plan below to edit its name, warranty duration, price, or remove it:\n\n` +
+    `Total Plans: *${variants.length}*`;
+
+  await safeEditAdminMessage(ctx, msg, getAdminProductVariantsKeyboard(product, variants));
+});
+
+// 🏷 View Single Sub-Category / Plan Detail
+adminComposer.action(/^admin_var_view_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+  const variantId = ctx.match[1];
+  const variant = await prisma.productVariant.findUnique({
+    where: { id: variantId },
+    include: {
+      product: { include: { category: true } },
+      _count: {
+        select: { stockItems: { where: { isSold: false, lockedAt: null } } },
+      },
+    },
+  });
+
+  if (!variant) {
+    await ctx.answerCbQuery('Sub-category not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const stockCount = variant._count?.stockItems ?? 0;
+  const statusStr = variant.isEnabled ? '✅ Active (Shown to Customers)' : '⏸ Disabled (Hidden)';
+  const deliveryStr = variant.deliveryType === 'AUTOMATIC' ? '⚡ Instant Automatic Delivery' : '🖐 Manual Delivery';
+
+  const msg =
+    `🏷 *Sub-Category / Plan Details*\n\n` +
+    `• *Product:* ${variant.product.name}\n` +
+    `• *Plan Name:* *${variant.name}*\n` +
+    `• *Category:* ${variant.product.category?.name || 'N/A'}\n` +
+    `• *Price:* *Rs. ${Number(variant.price).toFixed(2)} PKR*\n` +
+    `• *Warranty / Duration Details:* ${variant.duration || '_(Not set)_'}\n` +
+    `• *Delivery Mode:* ${deliveryStr}\n` +
+    `• *Live Stock Available:* *${stockCount} accounts/keys*\n` +
+    `• *Status:* ${statusStr}\n` +
+    (variant.description ? `• *Plan Notes:* ${variant.description}\n` : '') +
+    `\nSelect an action below:`;
+
+  await safeEditAdminMessage(ctx, msg, getAdminVariantDetailKeyboard(variant));
+});
+
+// 🔄 Toggle Sub-Category / Plan Enabled Status
+adminComposer.action(/^admin_var_toggle_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const variantId = ctx.match[1];
+  const updated = await ProductService.toggleVariantStatus(variantId);
+  if (!updated) {
+    await ctx.answerCbQuery('Sub-category not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  await ctx.answerCbQuery(updated.isEnabled ? '✅ Plan Enabled!' : '⏸ Plan Disabled!').catch(() => {});
+
+  const variant = await prisma.productVariant.findUnique({
+    where: { id: variantId },
+    include: {
+      product: { include: { category: true } },
+      _count: { select: { stockItems: { where: { isSold: false, lockedAt: null } } } },
+    },
+  });
+
+  if (!variant) return;
+
+  const stockCount = variant._count?.stockItems ?? 0;
+  const statusStr = variant.isEnabled ? '✅ Active (Shown to Customers)' : '⏸ Disabled (Hidden)';
+  const deliveryStr = variant.deliveryType === 'AUTOMATIC' ? '⚡ Instant Automatic Delivery' : '🖐 Manual Delivery';
+
+  const msg =
+    `🏷 *Sub-Category / Plan Details*\n\n` +
+    `• *Product:* ${variant.product.name}\n` +
+    `• *Plan Name:* *${variant.name}*\n` +
+    `• *Category:* ${variant.product.category?.name || 'N/A'}\n` +
+    `• *Price:* *Rs. ${Number(variant.price).toFixed(2)} PKR*\n` +
+    `• *Warranty / Duration Details:* ${variant.duration || '_(Not set)_'}\n` +
+    `• *Delivery Mode:* ${deliveryStr}\n` +
+    `• *Live Stock Available:* *${stockCount} accounts/keys*\n` +
+    `• *Status:* ${statusStr}\n` +
+    (variant.description ? `• *Plan Notes:* ${variant.description}\n` : '') +
+    `\nSelect an action below:`;
+
+  await safeEditAdminMessage(ctx, msg, getAdminVariantDetailKeyboard(variant));
+});
+
+// ⚡ / 🖐 Toggle Sub-Category Delivery Type (Auto vs Manual)
+adminComposer.action(/^admin_var_toggle_delivery_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const variantId = ctx.match[1];
+  const current = await prisma.productVariant.findUnique({ where: { id: variantId } });
+  if (!current) return;
+
+  const newDelivery = current.deliveryType === 'AUTOMATIC' ? DeliveryType.MANUAL : DeliveryType.AUTOMATIC;
+  const updated = await ProductService.updateVariant(variantId, { deliveryType: newDelivery });
+
+  const label = updated.deliveryType === 'AUTOMATIC' ? '⚡ Instant Auto Delivery' : '🖐 Manual Delivery';
+  await ctx.answerCbQuery(`Delivery changed to: ${label}`, { show_alert: true }).catch(() => {});
+
+  const variant = await prisma.productVariant.findUnique({
+    where: { id: variantId },
+    include: {
+      product: { include: { category: true } },
+      _count: { select: { stockItems: { where: { isSold: false, lockedAt: null } } } },
+    },
+  });
+
+  if (!variant) return;
+
+  const stockCount = variant._count?.stockItems ?? 0;
+  const statusStr = variant.isEnabled ? '✅ Active (Shown to Customers)' : '⏸ Disabled (Hidden)';
+  const deliveryStr = variant.deliveryType === 'AUTOMATIC' ? '⚡ Instant Automatic Delivery' : '🖐 Manual Delivery';
+
+  const msg =
+    `🏷 *Sub-Category / Plan Details*\n\n` +
+    `• *Product:* ${variant.product.name}\n` +
+    `• *Plan Name:* *${variant.name}*\n` +
+    `• *Category:* ${variant.product.category?.name || 'N/A'}\n` +
+    `• *Price:* *Rs. ${Number(variant.price).toFixed(2)} PKR*\n` +
+    `• *Warranty / Duration Details:* ${variant.duration || '_(Not set)_'}\n` +
+    `• *Delivery Mode:* ${deliveryStr}\n` +
+    `• *Live Stock Available:* *${stockCount} accounts/keys*\n` +
+    `• *Status:* ${statusStr}\n` +
+    (variant.description ? `• *Plan Notes:* ${variant.description}\n` : '') +
+    `\nSelect an action below:`;
+
+  await safeEditAdminMessage(ctx, msg, getAdminVariantDetailKeyboard(variant));
+});
+
+// 🗑 Confirm Sub-Category Removal
+adminComposer.action(/^admin_var_del_confirm_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const variantId = ctx.match[1];
+  const variant = await prisma.productVariant.findUnique({
+    where: { id: variantId },
+    include: { product: true },
+  });
+
+  if (!variant) {
+    await ctx.answerCbQuery('Sub-category not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const msg =
+    `⚠️ *Confirm Sub-Category Removal*\n\n` +
+    `Are you sure you want to remove plan *"${variant.name}"* from *"${variant.product.name}"*?\n\n` +
+    `_Note: If this plan has past orders, it will be safely disabled & hidden from store to preserve past invoices._`;
+
+  await safeEditAdminMessage(ctx, msg, getVariantDeleteConfirmKeyboard(variantId, variant.productId));
+});
+
+// 🗑 Execute Sub-Category Removal
+adminComposer.action(/^admin_var_delete_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const variantId = ctx.match[1];
+  const result = await ProductService.deleteVariant(variantId);
+
+  await ctx.answerCbQuery(result.message, { show_alert: true }).catch(() => {});
+
+  const prodId = result.productId;
+  if (!prodId) {
+    await safeEditAdminMessage(ctx, `✅ ${result.message}`, getAdminMainKeyboard());
+    return;
+  }
+
+  const product = await prisma.product.findUnique({
+    where: { id: prodId },
+    include: {
+      category: true,
+      variants: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          _count: {
+            select: { stockItems: { where: { isSold: false, lockedAt: null } } },
+          },
+        },
+      },
+    },
+  });
+
+  if (!product) return;
+
+  const msg =
+    `${result.success ? '✅' : '⚠️'} ${result.message}\n\n` +
+    `🗂 *Remaining Sub-Categories for ${product.name} (${product.variants.length}):*`;
+
+  await safeEditAdminMessage(ctx, msg, getAdminProductVariantsKeyboard(product, product.variants));
+});
+
+// ➕ Add New Sub-Category / Plan Wizard — Step 1: Prompt Name
+adminComposer.action(/^admin_var_add_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const productId = ctx.match[1];
+  const product = await ProductService.getProductById(productId);
+
+  if (!product) {
+    await ctx.answerCbQuery('Product not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_NEW_VAR_NAME';
+  ctx.session.adminData = { productId, productName: product.name };
+
+  const promptMsg =
+    `➕ *Add Sub-Category / Plan to ${product.name} (Step 1/3)*\n\n` +
+    `Reply with the *Plan / Sub-Category Name*:\n\n` +
+    `Examples:\n` +
+    `• \`1 Month (20 Days Warranty)\`\n` +
+    `• \`1 Month (30 Days Full Warranty)\`\n` +
+    `• \`3 Months Private Account\`\n` +
+    `• \`1 Year License Key\``;
+
+  await safeEditAdminMessage(
+    ctx,
+    promptMsg,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', `admin_prod_vars_${productId}`)]])
+  );
+});
+
+// 💰 Edit Sub-Category Price Prompt
+adminComposer.action(/^admin_var_edit_price_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const variantId = ctx.match[1];
+  const variant = await ProductService.getVariantById(variantId);
+
+  if (!variant) {
+    await ctx.answerCbQuery('Sub-category not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_VAR_EDIT_PRICE';
+  ctx.session.adminData = {
+    variantId,
+    productName: variant.product.name,
+    variantName: variant.name,
+    productId: variant.productId,
+  };
+
+  const promptText =
+    `💰 *Edit Price — ${variant.product.name} (${variant.name})*\n\n` +
+    `Current Price: *Rs. ${Number(variant.price).toFixed(2)} PKR*\n\n` +
+    `Reply with the *new price in PKR* (e.g. \`800\` or \`1500\`):`;
+
+  await safeEditAdminMessage(
+    ctx,
+    promptText,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', `admin_var_view_${variantId}`)]])
+  );
+});
+
+// 🏷 Edit Sub-Category Name Prompt
+adminComposer.action(/^admin_var_edit_name_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const variantId = ctx.match[1];
+  const variant = await ProductService.getVariantById(variantId);
+
+  if (!variant) {
+    await ctx.answerCbQuery('Sub-category not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_VAR_EDIT_NAME';
+  ctx.session.adminData = {
+    variantId,
+    productName: variant.product.name,
+    variantName: variant.name,
+    productId: variant.productId,
+  };
+
+  const promptText =
+    `🏷 *Edit Plan Name — ${variant.product.name}*\n\n` +
+    `Current Name: *${variant.name}*\n\n` +
+    `Reply with the *new name* (e.g. \`1 Month (20 Days Warranty)\`):`;
+
+  await safeEditAdminMessage(
+    ctx,
+    promptText,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', `admin_var_view_${variantId}`)]])
+  );
+});
+
+// 📝 Edit Sub-Category Warranty / Details Prompt
+adminComposer.action(/^admin_var_edit_details_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const variantId = ctx.match[1];
+  const variant = await ProductService.getVariantById(variantId);
+
+  if (!variant) {
+    await ctx.answerCbQuery('Sub-category not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_VAR_EDIT_DETAILS';
+  ctx.session.adminData = {
+    variantId,
+    productName: variant.product.name,
+    variantName: variant.name,
+    productId: variant.productId,
+  };
+
+  const promptText =
+    `📝 *Edit Warranty / Details — ${variant.product.name} (${variant.name})*\n\n` +
+    `Current Details: *${variant.duration || 'None'}*\n\n` +
+    `Reply with the *warranty duration or plan details* (e.g. \`20 Days Replacement Warranty\` or \`Private Profile - UHD\`), or send \`clear\` to reset:`;
+
+  await safeEditAdminMessage(
+    ctx,
+    promptText,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', `admin_var_view_${variantId}`)]])
+  );
+});
+
+// 📥 Select Sub-Category / Plan for Product Stock Upload Menu
+adminComposer.action(/^admin_prod_stock_menu_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const prodId = ctx.match[1];
+  const product = await prisma.product.findUnique({
+    where: { id: prodId },
+    include: {
+      variants: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          _count: {
+            select: { stockItems: { where: { isSold: false, lockedAt: null } } },
+          },
+        },
+      },
+    },
+  });
+
+  if (!product) {
+    await ctx.answerCbQuery('Product not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const variants = product.variants || [];
+  if (variants.length === 0) {
+    await safeEditAdminMessage(
+      ctx,
+      `⚠️ *${product.name}* does not have any sub-categories/plans yet.\n\nPlease add a sub-category/plan first!`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('➕ Add Sub-Category / Plan', `admin_var_add_${product.id}`)],
+        [Markup.button.callback('⬅️ Back to Product', `admin_prod_view_${product.id}`)],
+      ])
+    );
+    return;
+  }
+
+  const msg =
+    `📥 *Add Stock to ${product.name}*\n\n` +
+    `Select the specific sub-category / plan you want to add accounts or keys to:`;
+
+  await safeEditAdminMessage(ctx, msg, getSelectVariantForStockKeyboard(product, variants));
 });
 
 // 📦 Toggle Product Status (Active / Disabled)
@@ -194,61 +639,47 @@ adminComposer.action(/^admin_prod_toggle_(.+)$/, async (ctx) => {
 
   const product = await prisma.product.findUnique({
     where: { id: prodId },
-    include: { category: true, variants: true },
+    include: {
+      category: true,
+      variants: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          _count: { select: { stockItems: { where: { isSold: false, lockedAt: null } } } },
+        },
+      },
+    },
   });
 
-  const variant = product?.variants[0];
-  const stockCount = variant ? await ProductService.getAvailableStockCount(variant.id) : 0;
-  const statusStr = product?.status === 'ACTIVE' ? '✅ Active (Shown in Store)' : '⏸ Disabled (Hidden)';
+  if (!product) return;
+
+  const variants = product.variants || [];
+  const totalStock = variants.reduce((sum, v) => sum + (v._count?.stockItems ?? 0), 0);
+  const statusStr = product.status === 'ACTIVE' ? '✅ Active (Shown in Store)' : '⏸ Disabled (Hidden)';
+
+  let plansText = '';
+  if (variants.length === 0) {
+    plansText = `⚠️ _No sub-categories or plans added yet. Press "➕ Add Sub-Category" below._\n`;
+  } else {
+    plansText = `*Sub-Categories / Plans (${variants.length}):*\n`;
+    variants.forEach((v, idx) => {
+      const vStatus = v.isEnabled ? '✅' : '⏸';
+      const durationStr = v.duration ? ` [${v.duration}]` : '';
+      const deliveryStr = v.deliveryType === 'AUTOMATIC' ? '⚡ Auto' : '🖐 Manual';
+      plansText += `${idx + 1}. ${vStatus} *${v.name}* — Rs. ${Number(v.price).toFixed(2)} PKR${durationStr} (Stock: ${v._count?.stockItems ?? 0} | ${deliveryStr})\n`;
+    });
+  }
 
   const msg =
     `📦 *Product Details*\n\n` +
-    `• *Name:* ${product?.name}\n` +
-    `• *Category:* ${product?.category?.name || 'N/A'}\n` +
-    `• *Price:* Rs. ${variant ? Number(variant.price).toFixed(2) : '0.00'} PKR\n` +
-    `• *Stock Available:* ${stockCount} items\n` +
+    `• *Name:* ${product.name}\n` +
+    `• *Category:* ${product.category?.name || 'N/A'}\n` +
+    `• *Total Live Stock:* *${totalStock} items*\n` +
     `• *Status:* ${statusStr}\n` +
-    `• *Description:* ${product?.description || 'N/A'}\n\n` +
+    `• *Description:* ${product.description || 'N/A'}\n\n` +
+    `${plansText}\n` +
     `Select an option below:`;
 
   await safeEditAdminMessage(ctx, msg, getProductDetailKeyboard(product));
-});
-
-// 💰 Direct Edit Price Action for Product
-adminComposer.action(/^admin_prod_price_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  const variantId = ctx.match[1];
-  const variant = await prisma.productVariant.findUnique({
-    where: { id: variantId },
-    include: { product: true },
-  });
-
-  if (!variant) {
-    await ctx.answerCbQuery('Product variant not found.', { show_alert: true }).catch(() => {});
-    return;
-  }
-
-  if (!ctx.session) ctx.session = {};
-  ctx.session.adminState = 'AWAITING_STOCK_PRICE';
-  ctx.session.adminData = {
-    variantId,
-    productName: variant.product.name,
-    variantName: variant.name,
-    currentPrice: Number(variant.price),
-    directPriceEdit: true,
-  };
-
-  const promptText =
-    `💰 *Edit Price — ${variant.product.name}*\n\n` +
-    `Current Price: *Rs. ${Number(variant.price).toFixed(2)} PKR*\n\n` +
-    `Reply with the *new price in PKR* (e.g. \`1500\` or \`2500\`):\n\n` +
-    `Or type \`skip\` to cancel without changing.`;
-
-  await safeEditAdminMessage(
-    ctx,
-    promptText,
-    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]])
-  );
 });
 
 // 🗑 Confirm Product Deletion
@@ -567,162 +998,106 @@ adminComposer.action(/^admin_reject_pay_(.+)$/, async (ctx) => {
   }
 });
 
-// 📦 Stock Management Screen
+// 📦 Stock Management Screen — Shows Products with Stock & Plan breakdown
 adminComposer.action('admin_stock', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const variants = await prisma.productVariant.findMany({
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+    ctx.session.pendingStockLines = undefined;
+  }
+
+  const products = await prisma.product.findMany({
+    orderBy: { createdAt: 'desc' },
     include: {
-      product: true,
-      stockItems: {
-        where: { isSold: false, lockedAt: null },
-        select: { id: true },
+      category: true,
+      variants: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          _count: {
+            select: { stockItems: { where: { isSold: false, lockedAt: null } } },
+          },
+        },
       },
     },
-    orderBy: { createdAt: 'desc' },
   });
 
-  if (variants.length === 0) {
+  if (products.length === 0) {
     await safeEditAdminMessage(
       ctx,
-      '📦 *Stock Management*\n\nNo product variants available. Please create a product first!',
+      '📦 *Stock Management*\n\nNo products available. Please create a product first!',
       Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
     );
     return;
   }
 
-  let text = `📦 *Stock & Account Management*\n\nSelect a product below to upload or delete accounts/stock:\n\n`;
-  const buttons: any[] = [];
+  let totalStoreStock = 0;
+  let summaryText = `📦 *Stock & Account Management*\n\n`;
 
-  variants.forEach((v) => {
-    const stockCount = v.stockItems.length;
-    text += `• *${v.product.name}* — Current Stock: *${stockCount} accounts*\n`;
-    buttons.push([
-      Markup.button.callback(`📥 Add Stock: ${v.product.name}`, `admin_add_stock_${v.id}`),
-      Markup.button.callback(`🗑 Delete Stock`, `admin_delete_stock_variant_${v.id}`),
-    ]);
+  products.forEach((p) => {
+    const pStock = p.variants.reduce((sum, v) => sum + (v._count?.stockItems ?? 0), 0);
+    totalStoreStock += pStock;
+    summaryText += `• *${p.name}* (${p.variants.length} plans) — *${pStock} accounts*\n`;
   });
 
-  buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
+  summaryText += `\n📊 *Total Live Inventory:* *${totalStoreStock} items*\n\n`;
+  summaryText += `Tap any product below to select a sub-category/plan to upload or delete accounts:`;
 
-  await safeEditAdminMessage(ctx, text, Markup.inlineKeyboard(buttons));
+  await safeEditAdminMessage(ctx, summaryText, getAdminStockProductsKeyboard(products));
 });
 
-// 📋 Orders Management Screen
-adminComposer.action('admin_orders', async (ctx) => {
+// 📦 Stock Management for Specific Product — Sub-Categories & Plans Selection
+adminComposer.action(/^admin_stock_prod_(.+)$/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const totalOrders = await prisma.order.count();
-  const pendingOrders = await prisma.order.count({ where: { orderStatus: 'PENDING' } });
-  const completedOrders = await prisma.order.count({ where: { orderStatus: 'COMPLETED' } });
-
-  const msg =
-    `📋 *Order Management*\n\n` +
-    `• Total Orders: *${totalOrders}*\n` +
-    `• Pending Orders: *${pendingOrders}*\n` +
-    `• Completed Orders: *${completedOrders}*`;
-
-  await safeEditAdminMessage(
-    ctx,
-    msg,
-    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
-  );
-});
-
-// 👥 Users Management Screen
-adminComposer.action('admin_users', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  const totalUsers = await prisma.user.count();
-  const bannedUsers = await prisma.user.count({ where: { isBanned: true } });
-
-  const msg =
-    `👥 *Customer & User Management*\n\n` +
-    `• Total Registered Customers: *${totalUsers}*\n` +
-    `• Suspended/Banned Accounts: *${bannedUsers}*`;
-
-  await safeEditAdminMessage(
-    ctx,
-    msg,
-    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
-  );
-});
-
-// 🎟 Coupons Screen
-adminComposer.action('admin_coupons', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  const coupons = await prisma.coupon.findMany();
-  let text = `🎟 *Discount Coupons*\n\nActive Coupons (${coupons.length}):\n`;
-  if (coupons.length === 0) text += `No coupons created yet.`;
-  coupons.forEach((c) => {
-    text += `• \`${c.code}\` — ${c.discountType === 'PERCENTAGE' ? c.discountValue + '%' : '$' + c.discountValue}\n`;
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+    ctx.session.pendingStockLines = undefined;
+  }
+  const prodId = ctx.match[1];
+  const product = await prisma.product.findUnique({
+    where: { id: prodId },
+    include: {
+      category: true,
+      variants: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          _count: {
+            select: { stockItems: { where: { isSold: false, lockedAt: null } } },
+          },
+        },
+      },
+    },
   });
 
-  await safeEditAdminMessage(
-    ctx,
-    text,
-    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
-  );
-});
-
-// 📢 Broadcast Screen — Prompt Admin for Broadcast Text/Photo
-adminComposer.action('admin_broadcast', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  const userCount = await prisma.user.count({ where: { isBanned: false } });
-
-  if (!ctx.session) ctx.session = {};
-  ctx.session.adminState = 'AWAITING_BROADCAST_MESSAGE';
-
-  const msg =
-    `📢 *Customer Mass Broadcast*\n\n` +
-    `👥 *Total Reachable Customers:* *${userCount} users*\n\n` +
-    `Please reply directly to this chat with your *announcement text* or *photo with caption* to send to all registered bot users.\n\n` +
-    `_(Supports Markdown formatting like *bold*, _italic_, and line breaks)_`;
-
-  await safeEditAdminMessage(
-    ctx,
-    msg,
-    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_main')]])
-  );
-});
-
-// 🚀 Confirm & Dispatch Broadcast Action
-adminComposer.action('admin_confirm_broadcast', async (ctx) => {
-  const adminData = ctx.session?.adminData;
-  if (!adminData || (!adminData.broadcastText && !adminData.fileId)) {
-    await ctx.answerCbQuery('⚠️ Broadcast message context lost. Please try again.', { show_alert: true }).catch(() => {});
+  if (!product) {
+    await ctx.answerCbQuery('Product not found.', { show_alert: true }).catch(() => {});
     return;
   }
 
-  const { broadcastText, fileId } = adminData;
-  ctx.session!.adminState = undefined;
-  ctx.session!.adminData = undefined;
+  const variants = product.variants || [];
+  const totalStock = variants.reduce((sum, v) => sum + (v._count?.stockItems ?? 0), 0);
 
-  await ctx.answerCbQuery('🚀 Sending broadcast to all users...').catch(() => {});
+  let plansText = '';
+  if (variants.length === 0) {
+    plansText = `⚠️ _No sub-categories or plans added yet. Press "➕ Add New Sub-Category / Plan" below._\n`;
+  } else {
+    plansText = `*Available Sub-Categories / Plans:*\n`;
+    variants.forEach((v, idx) => {
+      const durationStr = v.duration ? ` [${v.duration}]` : '';
+      const deliveryStr = v.deliveryType === 'AUTOMATIC' ? '⚡ Auto' : '🖐 Manual';
+      plansText += `${idx + 1}. *${v.name}* — Rs. ${Number(v.price).toFixed(0)} PKR${durationStr}\n   📊 Stock: *${v._count?.stockItems ?? 0} items* | Delivery: ${deliveryStr}\n`;
+    });
+  }
 
-  const broadcast = await BroadcastService.sendBroadcast(
-    ctx.from.id.toString(),
-    broadcastText || '',
-    ctx as any,
-    fileId
-  );
+  const msg =
+    `📦 *Stock Management — ${product.name}*\n\n` +
+    `• *Category:* ${product.category?.name || 'N/A'}\n` +
+    `• *Total Live Stock:* *${totalStock} items*\n\n` +
+    `${plansText}\n` +
+    `Select a plan below to add stock or delete accounts:`;
 
-  const confirmMsg =
-    `🎉 *Broadcast Dispatched Successfully!*\n\n` +
-    `👥 *Target Audience:* ${broadcast.targetCount} customers\n` +
-    `⚡ Messages are being delivered in the background.`;
-
-  const keyboard = Markup.inlineKeyboard([[Markup.button.callback('⚙️ Admin Panel', 'admin_main')]]);
-  await safeEditAdminMessage(ctx, confirmMsg, keyboard);
-});
-
-// ⭐ Reviews Screen
-adminComposer.action('admin_reviews', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  const totalReviews = await prisma.review.count();
-  const msg = `⭐ *Customer Reviews Moderation*\n\nTotal Product Reviews: *${totalReviews}*`;
-  await safeEditAdminMessage(
-    ctx,
-    msg,
-    Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]])
-  );
+  await safeEditAdminMessage(ctx, msg, getAdminStockProductPlansKeyboard(product, variants));
 });
 
 // 📥 Select Variant for Stock Upload — Step 1: Ask for Price
@@ -735,24 +1110,35 @@ adminComposer.action(/^admin_add_stock_(.+)$/, async (ctx) => {
   });
 
   if (!variant) {
-    await ctx.answerCbQuery('Product variant not found.').catch(() => {});
+    await ctx.answerCbQuery('Sub-category / Plan not found.').catch(() => {});
     return;
   }
 
   if (!ctx.session) ctx.session = {};
   ctx.session.adminState = 'AWAITING_STOCK_PRICE';
-  ctx.session.adminData = { variantId, productName: variant.product.name, variantName: variant.name, currentPrice: Number(variant.price) };
+  ctx.session.adminData = {
+    variantId,
+    productName: variant.product.name,
+    variantName: variant.name,
+    currentPrice: Number(variant.price),
+    productId: variant.productId,
+  };
 
+  const durationStr = variant.duration ? `• *Warranty / Duration:* ${variant.duration}\n` : '';
   const promptText =
     `💰 *Set Price — ${variant.product.name}*\n\n` +
-    `Current Price: *Rs. ${Number(variant.price).toFixed(2)} PKR*\n\n` +
+    `• *Sub-Category / Plan:* *${variant.name}*\n` +
+    durationStr +
+    `• *Current Price:* *Rs. ${Number(variant.price).toFixed(2)} PKR*\n\n` +
     `Reply with the *new price in PKR* to update it, or type \`skip\` to keep the current price.\n\n` +
     `Example: \`1500\` or \`skip\``;
 
   await safeEditAdminMessage(
     ctx,
     promptText,
-    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_stock')]])
+    Markup.inlineKeyboard([
+      [Markup.button.callback('❌ Cancel', `admin_stock_prod_${variant.productId}`)],
+    ])
   );
 });
 
@@ -1867,18 +2253,24 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
         summaryMsg =
           `⚠️ *Duplicate Detected!*\n\n` +
           `📦 *Product:* ${productName}\n` +
+          `🏷 *Sub-Category / Plan:* ${adminData.variantName || 'Selected Plan'}\n` +
           `This stock entry already exists in the database. Nothing was added.\n` +
-          `📊 *Total Live Stock:* ${availableStock} items available`;
+          `📊 *Total Live Stock for this Plan:* ${availableStock} items available`;
       } else {
         summaryMsg =
           `✅ *1 Stock Item Added & Encrypted!*\n\n` +
           `📦 *Product:* ${productName}\n` +
-          `📊 *Total Live Stock:* ${availableStock} items available`;
+          `🏷 *Sub-Category / Plan:* ${adminData.variantName || 'Selected Plan'}\n` +
+          `📊 *Total Live Stock for this Plan:* ${availableStock} items available`;
       }
 
       await ctx.reply(summaryMsg, {
         parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📦 Back to Stock Management', 'admin_stock')]]).reply_markup,
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('📥 Add Another Account to this Plan', `admin_add_stock_${variantId}`)],
+          [Markup.button.callback('📦 Product Stock Overview', `admin_stock_prod_${adminData.productId || ''}`)],
+          [Markup.button.callback('📦 All Stock Management', 'admin_stock')],
+        ]).reply_markup,
       });
     } catch (err: any) {
       logger.error('Failed to import stock item', { error: err.message, variantId });
@@ -1886,6 +2278,199 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
       ctx.session!.adminData = undefined;
       await ctx.reply(`⚠️ Failed to add stock: ${err.message}`, {
         reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Stock Management', 'admin_stock')]]).reply_markup,
+      });
+    }
+    return;
+  }
+
+  // 💰 Edit Sub-Category Price State
+  if (state === 'AWAITING_VAR_EDIT_PRICE' && adminData.variantId) {
+    const { variantId, productName, variantName, productId } = adminData;
+    const cleanPrice = text.replace(/,/g, '').replace(/[^0-9.]/g, '');
+    const newPrice = parseFloat(cleanPrice);
+
+    if (isNaN(newPrice) || newPrice < 0) {
+      await ctx.reply('⚠️ Invalid price. Please enter a valid number (e.g. `800` or `1500`):', { parse_mode: 'Markdown' });
+      return;
+    }
+
+    try {
+      const updated = await ProductService.updateVariant(variantId, { price: newPrice });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+
+      await ctx.reply(
+        `🎉 *Price for "${updated.name}" updated to Rs. ${newPrice.toFixed(2)} PKR!*`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🏷 View Sub-Category Details', `admin_var_view_${variantId}`)],
+            [Markup.button.callback('🗂 All Sub-Categories', `admin_prod_vars_${productId}`)],
+            [Markup.button.callback('📦 Product Details', `admin_prod_view_${productId}`)],
+          ]).reply_markup,
+        }
+      );
+    } catch (err: any) {
+      logger.error('Failed to update variant price', { error: err.message, variantId });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to update price: ${err.message}`);
+    }
+    return;
+  }
+
+  // 🏷 Edit Sub-Category Name State
+  if (state === 'AWAITING_VAR_EDIT_NAME' && adminData.variantId) {
+    const { variantId, productId } = adminData;
+    if (!text || text.length > 100) {
+      await ctx.reply('⚠️ Plan name must be between 1 and 100 characters. Please try again:');
+      return;
+    }
+
+    try {
+      const updated = await ProductService.updateVariant(variantId, { name: text });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+
+      await ctx.reply(
+        `✅ *Plan name updated to:* *${updated.name}*`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🏷 View Sub-Category Details', `admin_var_view_${variantId}`)],
+            [Markup.button.callback('🗂 All Sub-Categories', `admin_prod_vars_${productId}`)],
+            [Markup.button.callback('📦 Product Details', `admin_prod_view_${productId}`)],
+          ]).reply_markup,
+        }
+      );
+    } catch (err: any) {
+      logger.error('Failed to update variant name', { error: err.message, variantId });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to update name: ${err.message}`);
+    }
+    return;
+  }
+
+  // 📝 Edit Sub-Category Warranty / Duration / Details State
+  if (state === 'AWAITING_VAR_EDIT_DETAILS' && adminData.variantId) {
+    const { variantId, productId } = adminData;
+    const newDetails = text.toLowerCase() === 'clear' ? null : text;
+
+    try {
+      const updated = await ProductService.updateVariant(variantId, { duration: newDetails });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+
+      const detailStr = newDetails ? `*${newDetails}*` : '_(Cleared)_';
+      await ctx.reply(
+        `✅ *Warranty / Details updated to:* ${detailStr}`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🏷 View Sub-Category Details', `admin_var_view_${variantId}`)],
+            [Markup.button.callback('🗂 All Sub-Categories', `admin_prod_vars_${productId}`)],
+            [Markup.button.callback('📦 Product Details', `admin_prod_view_${productId}`)],
+          ]).reply_markup,
+        }
+      );
+    } catch (err: any) {
+      logger.error('Failed to update variant details', { error: err.message, variantId });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to update details: ${err.message}`);
+    }
+    return;
+  }
+
+  // ➕ Add Sub-Category / Plan — Step 1: Name -> Step 2: Warranty / Details
+  if (state === 'AWAITING_NEW_VAR_NAME' && adminData.productId) {
+    if (!text || text.length > 100) {
+      await ctx.reply('⚠️ Plan name must be between 1 and 100 characters. Please enter a valid name:');
+      return;
+    }
+    adminData.varName = text;
+    ctx.session!.adminData = adminData;
+    ctx.session!.adminState = 'AWAITING_NEW_VAR_DETAILS';
+
+    await ctx.reply(
+      `✅ Plan Name set: *${text}*\n\n*(Step 2/3)* Reply with the *Warranty / Duration / Plan Details* (e.g. \`20 Days Replacement Warranty\` or \`Private UHD 4 Screens\`), or type \`skip\` if none:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', `admin_prod_vars_${adminData.productId}`)]]).reply_markup,
+      }
+    );
+    return;
+  }
+
+  // ➕ Add Sub-Category / Plan — Step 2: Warranty / Details -> Step 3: Price
+  if (state === 'AWAITING_NEW_VAR_DETAILS' && adminData.productId) {
+    adminData.varDuration = text.toLowerCase() === 'skip' ? null : text;
+    ctx.session!.adminData = adminData;
+    ctx.session!.adminState = 'AWAITING_NEW_VAR_PRICE';
+
+    await ctx.reply(
+      `✅ Warranty/Details saved: *${adminData.varDuration || 'None'}*\n\n*(Step 3/3)* Now reply with the *Price in PKR* for this plan (e.g. \`800\` or \`1500\`):`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', `admin_prod_vars_${adminData.productId}`)]]).reply_markup,
+      }
+    );
+    return;
+  }
+
+  // ➕ Add Sub-Category / Plan — Step 3: Price -> Create Variant in Real-Time!
+  if (state === 'AWAITING_NEW_VAR_PRICE' && adminData.productId) {
+    const cleanPrice = text.replace(/,/g, '').replace(/[^0-9.]/g, '');
+    const priceNum = parseFloat(cleanPrice);
+    if (isNaN(priceNum) || priceNum < 0) {
+      await ctx.reply('⚠️ Invalid price! Please enter a valid number (e.g. `800` or `1500 PKR`):', {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', `admin_prod_vars_${adminData.productId}`)]]).reply_markup,
+      });
+      return;
+    }
+
+    const { productId, productName, varName, varDuration } = adminData;
+
+    try {
+      const variant = await ProductService.createVariant(
+        productId,
+        varName,
+        priceNum,
+        DeliveryType.AUTOMATIC,
+        varDuration || undefined,
+        undefined,
+        'PKR'
+      );
+
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+
+      const durationStr = varDuration ? `• *Warranty / Details:* ${varDuration}\n` : '';
+      const successMsg =
+        `🎉 *Sub-Category / Plan Added Successfully!*\n\n` +
+        `📦 *Product:* ${productName}\n` +
+        `🏷 *Plan Name:* *${variant.name}*\n` +
+        durationStr +
+        `💰 *Price:* Rs. ${priceNum.toFixed(2)} PKR\n` +
+        `🚀 *Delivery Mode:* ⚡ Instant Automatic Delivery\n` +
+        `📊 *Status:* ✅ Active`;
+
+      await ctx.reply(successMsg, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('📥 Add Stock to this Plan Now', `admin_add_stock_${variant.id}`)],
+          [Markup.button.callback('🗂 All Sub-Categories', `admin_prod_vars_${productId}`)],
+          [Markup.button.callback('📦 Product Details', `admin_prod_view_${productId}`)],
+        ]).reply_markup,
+      });
+    } catch (err: any) {
+      logger.error('Failed to create new variant', { error: err.message, adminData });
+      ctx.session!.adminState = undefined;
+      ctx.session!.adminData = undefined;
+      await ctx.reply(`⚠️ Failed to create plan: ${err.message}`, {
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🗂 All Sub-Categories', `admin_prod_vars_${productId}`)]]).reply_markup,
       });
     }
     return;
@@ -1935,7 +2520,7 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     ctx.session!.adminState = 'AWAITING_PRODUCT_DESCRIPTION';
 
     await ctx.reply(
-      `✅ Product Name set: *${text}*\n\n*(Step 3/3)* Now reply with the *Product Description*:`,
+      `✅ Product Name set: *${text}*\n\n*(Step 3/5)* Now reply with the *Product Description*:`,
       {
         parse_mode: 'Markdown',
         reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]]).reply_markup,
@@ -1944,14 +2529,48 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     return;
   }
 
-  // Product Creation Wizard — Step 3: Description -> Ask Price
+  // Product Creation Wizard — Step 3: Description -> Ask Initial Plan Name
   if (state === 'AWAITING_PRODUCT_DESCRIPTION') {
     adminData.description = text || '';
+    ctx.session!.adminData = adminData;
+    ctx.session!.adminState = 'AWAITING_PRODUCT_PLAN_NAME';
+
+    await ctx.reply(
+      `✅ Description saved!\n\n*(Step 4/5)* Reply with the *First Sub-Category / Plan Name* (e.g. \`1 Month (20 Days Warranty)\` or \`Standard Plan\`):\n\n_Or type \`skip\` to use "Standard Plan"_`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]]).reply_markup,
+      }
+    );
+    return;
+  }
+
+  // Product Creation Wizard — Step 4: Plan Name -> Ask Warranty Details
+  if (state === 'AWAITING_PRODUCT_PLAN_NAME') {
+    const planName = text.toLowerCase() === 'skip' || !text ? 'Standard Plan' : text;
+    adminData.planName = planName;
+    ctx.session!.adminData = adminData;
+    ctx.session!.adminState = 'AWAITING_PRODUCT_PLAN_DETAILS';
+
+    await ctx.reply(
+      `✅ Plan Name set: *${planName}*\n\n*(Step 5/6)* Reply with *Warranty / Duration Details* (e.g. \`20 Days Replacement Warranty\` or \`30 Days Full Warranty\`):\n\n_Or type \`skip\` if none_`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]]).reply_markup,
+      }
+    );
+    return;
+  }
+
+  // Product Creation Wizard — Step 5: Warranty Details -> Ask Price
+  if (state === 'AWAITING_PRODUCT_PLAN_DETAILS') {
+    const planDuration = text.toLowerCase() === 'skip' ? null : text;
+    adminData.planDuration = planDuration;
     ctx.session!.adminData = adminData;
     ctx.session!.adminState = 'AWAITING_PRODUCT_PRICE';
 
     await ctx.reply(
-      `✅ Description saved!\n\n*(Final Step)* Reply with the *Price in PKR* (e.g. \`500\` or \`1200\`):`,
+      `✅ Warranty/Details set: *${planDuration || 'None'}*\n\n*(Final Step)* Reply with the *Price in PKR* for this plan (e.g. \`800\` or \`1500\`):`,
       {
         parse_mode: 'Markdown',
         reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_products')]]).reply_markup,
@@ -1960,7 +2579,7 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     return;
   }
 
-  // Product Creation Wizard — Step 4: Price -> Create Product Real-Time!
+  // Product Creation Wizard — Step 6: Price -> Create Product & Initial Variant Real-Time!
   if (state === 'AWAITING_PRODUCT_PRICE') {
     const cleanPrice = text.replace(/,/g, '').replace(/[^0-9.]/g, '');
     const priceNum = parseFloat(cleanPrice);
@@ -1972,17 +2591,17 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
       return;
     }
 
-    const { categoryId, categoryName, name, description } = adminData;
+    const { categoryId, categoryName, name, description, planName, planDuration } = adminData;
 
     try {
       // Create Product & Variant in Database Real-Time!
       const product = await ProductService.createProduct(categoryId, name, description);
       const variant = await ProductService.createVariant(
         product.id,
-        'Standard License',
+        planName || 'Standard Plan',
         priceNum,
         DeliveryType.AUTOMATIC,
-        undefined,
+        planDuration || undefined,
         undefined,
         'PKR'
       );
@@ -1990,17 +2609,21 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
       ctx.session!.adminState = undefined;
       ctx.session!.adminData = undefined;
 
+      const durationStr = planDuration ? `• *Warranty / Details:* ${planDuration}\n` : '';
       const successMsg =
         `🎉 *Product Added Live to Store in Real-Time!*\n\n` +
         `📦 *Product Name:* ${product.name}\n` +
         `📁 *Category:* ${categoryName || 'Store Category'}\n` +
+        `🏷 *Initial Plan:* *${variant.name}*\n` +
+        durationStr +
         `💰 *Price:* Rs. ${priceNum.toFixed(2)} PKR\n` +
         `📊 *Status:* Active & Live in Store`;
 
       await ctx.reply(successMsg, {
         parse_mode: 'Markdown',
         reply_markup: Markup.inlineKeyboard([
-          [Markup.button.callback('📥 Add Stock to Product', `admin_add_stock_${variant.id}`)],
+          [Markup.button.callback('📥 Add Stock to this Plan', `admin_add_stock_${variant.id}`)],
+          [Markup.button.callback('➕ Add More Sub-Categories / Plans', `admin_var_add_${product.id}`)],
           [Markup.button.callback('📦 Products Management', 'admin_products')],
           [Markup.button.callback('⚙️ Admin Panel', 'admin_main')],
         ]).reply_markup,

@@ -54,20 +54,21 @@ export function getProductVariantsKeyboard(
   const rows: any[] = variants.map((v) => {
     const stockCount = v._count?.stockItems ?? v.stockCount ?? 0;
     const stockBadge = stockCount > 0 ? ` (Stock: ${stockCount})` : ' [Out of Stock]';
-    const deliveryBadge = v.deliveryType === DeliveryType.AUTOMATIC ? '⚡ Auto' : '🖐 Manual';
-    const priceStr = `Rs. ${Number(v.price).toFixed(2)}`;
+    const deliveryBadge = v.deliveryType === DeliveryType.AUTOMATIC ? '⚡' : '🖐';
+    const durationBadge = v.duration ? ` [${v.duration}]` : '';
+    const priceStr = `Rs. ${Number(v.price).toFixed(0)}`;
 
     if (stockCount > 0) {
       return [
         Markup.button.callback(
-          `💳 ${v.name} — ${priceStr} [${deliveryBadge}]${stockBadge}`,
+          `💳 ${v.name}${durationBadge} — ${priceStr} ${deliveryBadge}${stockBadge}`,
           `buy_var_${v.id}`
         ),
       ];
     } else {
       return [
         Markup.button.callback(
-          `⚠️ ${v.name} — ${priceStr} [Out of Stock]`,
+          `⚠️ ${v.name}${durationBadge} — ${priceStr} [Out of Stock]`,
           'buy_zero_item'
         ),
       ];

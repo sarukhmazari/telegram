@@ -122,14 +122,26 @@ export function getAdminProductsKeyboard(products?: any[]) {
 }
 
 export function getProductDetailKeyboard(product: any) {
-  const v = product.variants?.[0];
+  const variants = product.variants || [];
   const buttons: any[] = [];
-  if (v) {
+
+  // If product has 1 variant, offer direct price edit and stock addition shortcuts
+  if (variants.length === 1) {
     buttons.push([
-      Markup.button.callback('💰 Edit Price', `admin_prod_price_${v.id}`),
-      Markup.button.callback('📥 Add Stock', `admin_add_stock_${v.id}`),
+      Markup.button.callback('📥 Add Stock', `admin_add_stock_${variants[0].id}`),
+      Markup.button.callback('💰 Edit Price', `admin_var_edit_price_${variants[0].id}`),
+    ]);
+  } else {
+    buttons.push([
+      Markup.button.callback('📥 Add Stock', `admin_prod_stock_menu_${product.id}`),
     ]);
   }
+
+  buttons.push([
+    Markup.button.callback(`🗂 Sub-Categories / Plans (${variants.length})`, `admin_prod_vars_${product.id}`),
+    Markup.button.callback('➕ Add Sub-Category', `admin_var_add_${product.id}`),
+  ]);
+
   buttons.push([
     Markup.button.callback(
       product.status === 'ACTIVE' ? '⏸ Disable' : '✅ Enable',
@@ -138,6 +150,136 @@ export function getProductDetailKeyboard(product: any) {
     Markup.button.callback('🗑 Delete Product', `admin_prod_del_confirm_${product.id}`),
   ]);
   buttons.push([Markup.button.callback('⬅️ Back to Products', 'admin_products')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getAdminProductVariantsKeyboard(product: any, variants: any[]) {
+  const buttons: any[] = [];
+
+  if (variants && variants.length > 0) {
+    variants.forEach((v) => {
+      const statusIcon = v.isEnabled ? '✅' : '⏸';
+      const durationBadge = v.duration ? ` [${v.duration}]` : '';
+      const stockBadge = ` (Stock: ${v.stockCount ?? v._count?.stockItems ?? 0})`;
+      const priceBadge = ` — Rs. ${Number(v.price).toFixed(0)}`;
+      buttons.push([
+        Markup.button.callback(
+          `${statusIcon} ${v.name}${priceBadge}${durationBadge}${stockBadge}`,
+          `admin_var_view_${v.id}`
+        ),
+      ]);
+    });
+  }
+
+  buttons.push([Markup.button.callback('➕ Add New Sub-Category / Plan', `admin_var_add_${product.id}`)]);
+  buttons.push([
+    Markup.button.callback('📥 Add Stock to Product', `admin_prod_stock_menu_${product.id}`),
+    Markup.button.callback('⬅️ Product Details', `admin_prod_view_${product.id}`),
+  ]);
+  buttons.push([Markup.button.callback('⬅️ Back to Products', 'admin_products')]);
+
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getAdminVariantDetailKeyboard(variant: any) {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('📥 Add Stock to this Plan', `admin_add_stock_${variant.id}`),
+      Markup.button.callback('💰 Edit Price', `admin_var_edit_price_${variant.id}`),
+    ],
+    [
+      Markup.button.callback('🏷 Edit Plan Name', `admin_var_edit_name_${variant.id}`),
+      Markup.button.callback('📝 Edit Warranty/Details', `admin_var_edit_details_${variant.id}`),
+    ],
+    [
+      Markup.button.callback(
+        variant.deliveryType === 'AUTOMATIC' ? '⚡ Auto Delivery' : '🖐 Manual Delivery',
+        `admin_var_toggle_delivery_${variant.id}`
+      ),
+      Markup.button.callback(
+        variant.isEnabled ? '⏸ Disable Plan' : '✅ Enable Plan',
+        `admin_var_toggle_${variant.id}`
+      ),
+    ],
+    [
+      Markup.button.callback('🗑 Delete Stock Items', `admin_delete_stock_variant_${variant.id}`),
+      Markup.button.callback('🗑 Remove Sub-Category', `admin_var_del_confirm_${variant.id}`),
+    ],
+    [
+      Markup.button.callback('🗂 All Sub-Categories', `admin_prod_vars_${variant.productId}`),
+      Markup.button.callback('📦 Product Details', `admin_prod_view_${variant.productId}`),
+    ],
+  ]);
+}
+
+export function getVariantDeleteConfirmKeyboard(variantId: string, productId: string) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('⚠️ Yes, Remove Sub-Category', `admin_var_delete_${variantId}`)],
+    [Markup.button.callback('❌ Cancel', `admin_var_view_${variantId}`)],
+  ]);
+}
+
+export function getSelectVariantForStockKeyboard(product: any, variants: any[]) {
+  const buttons: any[] = [];
+
+  variants.forEach((v) => {
+    const stockCount = v.stockCount ?? v._count?.stockItems ?? 0;
+    const durationBadge = v.duration ? ` [${v.duration}]` : '';
+    buttons.push([
+      Markup.button.callback(
+        `📥 ${v.name} (Stock: ${stockCount} | Rs. ${Number(v.price).toFixed(0)}${durationBadge})`,
+        `admin_add_stock_${v.id}`
+      ),
+    ]);
+  });
+
+  buttons.push([Markup.button.callback('➕ Create New Sub-Category / Plan', `admin_var_add_${product.id}`)]);
+  buttons.push([Markup.button.callback('⬅️ Back to Product', `admin_prod_view_${product.id}`)]);
+
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getAdminStockProductsKeyboard(products: any[]) {
+  const buttons: any[] = [];
+
+  products.forEach((p) => {
+    const totalStock = p.variants?.reduce(
+      (sum: number, v: any) => sum + (v.stockCount ?? v._count?.stockItems ?? 0),
+      0
+    ) ?? 0;
+    const planCount = p.variants?.length || 0;
+    const planText = planCount === 1 ? '1 plan' : `${planCount} plans`;
+    buttons.push([
+      Markup.button.callback(
+        `📦 ${p.name} (Stock: ${totalStock} across ${planText})`,
+        `admin_stock_prod_${p.id}`
+      ),
+    ]);
+  });
+
+  buttons.push([Markup.button.callback('⬅️ Back to Admin Panel', 'admin_main')]);
+  return Markup.inlineKeyboard(buttons);
+}
+
+export function getAdminStockProductPlansKeyboard(product: any, variants: any[]) {
+  const buttons: any[] = [];
+
+  variants.forEach((v) => {
+    const stockCount = v.stockCount ?? v._count?.stockItems ?? 0;
+    buttons.push([
+      Markup.button.callback(`📥 Add: ${v.name} (Stock: ${stockCount})`, `admin_add_stock_${v.id}`),
+      Markup.button.callback(`🗑 Delete Stock (${stockCount})`, `admin_delete_stock_variant_${v.id}`),
+    ]);
+  });
+
+  buttons.push([
+    Markup.button.callback('➕ Add New Sub-Category / Plan', `admin_var_add_${product.id}`),
+  ]);
+  buttons.push([
+    Markup.button.callback('🗂 Manage Sub-Categories', `admin_prod_vars_${product.id}`),
+    Markup.button.callback('⬅️ Back to Stock List', 'admin_stock'),
+  ]);
+
   return Markup.inlineKeyboard(buttons);
 }
 

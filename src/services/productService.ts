@@ -391,12 +391,90 @@ export class ProductService {
     });
   }
 
-  static async updateVariantPrice(variantId: string, newPrice: number): Promise<ProductVariant> {
+  static async getVariantById(variantId: string): Promise<(ProductVariant & { product: Product }) | null> {
+    return prisma.productVariant.findUnique({
+      where: { id: variantId },
+      include: { product: true },
+    });
+  }
+
+  static async updateVariant(
+    variantId: string,
+    data: {
+      name?: string;
+      price?: number;
+      duration?: string | null;
+      description?: string | null;
+      deliveryType?: DeliveryType;
+      isEnabled?: boolean;
+    }
+  ): Promise<ProductVariant> {
     ProductService.invalidateCategoryCache();
     return prisma.productVariant.update({
       where: { id: variantId },
-      data: { price: newPrice },
+      data,
     });
+  }
+
+  static async updateVariantPrice(variantId: string, newPrice: number): Promise<ProductVariant> {
+    return ProductService.updateVariant(variantId, { price: newPrice });
+  }
+
+  static async toggleVariantStatus(variantId: string): Promise<ProductVariant | null> {
+    ProductService.invalidateCategoryCache();
+    const variant = await prisma.productVariant.findUnique({ where: { id: variantId } });
+    if (!variant) return null;
+    return prisma.productVariant.update({
+      where: { id: variantId },
+      data: { isEnabled: !variant.isEnabled },
+    });
+  }
+
+  static async deleteVariant(
+    variantId: string
+  ): Promise<{ success: boolean; message: string; isSoftDeleted?: boolean; productId?: string }> {
+    ProductService.invalidateCategoryCache();
+    const variant = await prisma.productVariant.findUnique({
+      where: { id: variantId },
+      include: {
+        product: true,
+        orderItems: { select: { id: true }, take: 1 },
+      },
+    });
+
+    if (!variant) {
+      return { success: false, message: 'Sub-category / Plan not found.' };
+    }
+
+    const productId = variant.productId;
+    const hasOrders = variant.orderItems.length > 0;
+
+    if (hasOrders) {
+      // Soft-delete / disable variant to preserve order history
+      await prisma.productVariant.update({
+        where: { id: variantId },
+        data: { isEnabled: false },
+      });
+      return {
+        success: true,
+        isSoftDeleted: true,
+        productId,
+        message: `Plan "${variant.name}" has customer order history. It has been disabled & hidden from store to preserve past invoices.`,
+      };
+    }
+
+    // No past orders - delete unsold stock items and delete variant
+    await prisma.$transaction([
+      prisma.stockItem.deleteMany({ where: { variantId } }),
+      prisma.productVariant.delete({ where: { id: variantId } }),
+    ]);
+
+    return {
+      success: true,
+      isSoftDeleted: false,
+      productId,
+      message: `Plan "${variant.name}" was successfully deleted.`,
+    };
   }
 
   static async getAvailableStockCount(variantId: string): Promise<number> {

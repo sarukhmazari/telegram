@@ -475,11 +475,15 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
     const stockCount = (variant as any)._count?.stockItems ?? 0;
     const priceStr = Number(variant.price).toFixed(2);
     const deliveryStr = variant.deliveryType === 'AUTOMATIC' ? '⚡ Instant Auto Delivery' : '🖐 Manual Delivery';
+    const durationStr = variant.duration ? `• *Warranty / Plan Details:* ${variant.duration}\n` : '';
+    const planNameStr = variant.name !== 'Standard License' && variant.name !== 'Standard Plan' ? `• *Plan:* ${variant.name}\n` : '';
 
     const msg =
       `🛍 *Product Details*\n\n` +
       `📦 *Product:* ${product.name}\n` +
       `📁 *Category:* ${category.name}\n` +
+      planNameStr +
+      durationStr +
       `📊 *Available Items:* ${stockCount}\n` +
       `💰 *Price:* Rs. ${priceStr} PKR\n` +
       `🚀 *Delivery:* ${deliveryStr}\n\n` +
@@ -505,6 +509,14 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
   const totalStock = variants.reduce((sum: number, v: any) => sum + ((v as any)._count?.stockItems ?? 0), 0);
   const minPrice = Math.min(...variants.map((v: any) => Number(v.price)));
 
+  let plansListText = '';
+  variants.forEach((v: any, idx: number) => {
+    const vStock = (v as any)._count?.stockItems ?? v.stockCount ?? 0;
+    const durationStr = v.duration ? `\n   🛡 *Warranty / Plan:* ${v.duration}` : '';
+    const deliveryStr = v.deliveryType === 'AUTOMATIC' ? '⚡ Instant Auto' : '🖐 Manual';
+    plansListText += `\n${idx + 1}. *${v.name}* — Rs. ${Number(v.price).toFixed(0)} PKR\n   📦 Stock: ${vStock > 0 ? vStock + ' available' : 'Out of Stock'} | ${deliveryStr}${durationStr}`;
+  });
+
   const msg =
     `🛍 *Product Details*\n\n` +
     `📦 *Product:* ${product.name}\n` +
@@ -512,7 +524,8 @@ bot.action(/^cat_(.+)$/, async (ctx) => {
     `📊 *Total Stock:* ${totalStock}\n` +
     `💰 *Starting from:* Rs. ${minPrice.toFixed(0)} PKR\n\n` +
     `📝 *Description:*\n${desc}\n\n` +
-    `👇 *Select your preferred plan / duration:*`;
+    `📋 *Available Plans & Warranties:*${plansListText}\n\n` +
+    `👇 *Select your preferred plan / duration to purchase:*`;
 
   await safeEditMessage(ctx, msg, getProductVariantsKeyboard(product, variants, 'menu_store'));
 });
@@ -555,11 +568,15 @@ bot.action(/^prod_(.+)$/, async (ctx) => {
     const stockCount = (variant as any)._count?.stockItems ?? 0;
     const priceStr = Number(variant.price).toFixed(2);
     const deliveryStr = variant.deliveryType === 'AUTOMATIC' ? '⚡ Instant Auto Delivery' : '🖐 Manual Delivery';
+    const durationStr = variant.duration ? `• *Warranty / Plan Details:* ${variant.duration}\n` : '';
+    const planNameStr = variant.name !== 'Standard License' && variant.name !== 'Standard Plan' ? `• *Plan:* ${variant.name}\n` : '';
 
     const msg =
       `🛍 *Product Details*\n\n` +
       `📦 *Product:* ${product.name}\n` +
       `📁 *Category:* ${categoryName}\n` +
+      planNameStr +
+      durationStr +
       `📊 *Available Items:* ${stockCount}\n` +
       `💰 *Price:* Rs. ${priceStr} PKR\n` +
       `🚀 *Delivery:* ${deliveryStr}\n\n` +
@@ -585,6 +602,14 @@ bot.action(/^prod_(.+)$/, async (ctx) => {
   const totalStock = variants.reduce((sum: number, v: any) => sum + ((v as any)._count?.stockItems ?? 0), 0);
   const minPrice = Math.min(...variants.map((v: any) => Number(v.price)));
 
+  let plansListText = '';
+  variants.forEach((v: any, idx: number) => {
+    const vStock = (v as any)._count?.stockItems ?? v.stockCount ?? 0;
+    const durationStr = v.duration ? `\n   🛡 *Warranty / Plan:* ${v.duration}` : '';
+    const deliveryStr = v.deliveryType === 'AUTOMATIC' ? '⚡ Instant Auto' : '🖐 Manual';
+    plansListText += `\n${idx + 1}. *${v.name}* — Rs. ${Number(v.price).toFixed(0)} PKR\n   📦 Stock: ${vStock > 0 ? vStock + ' available' : 'Out of Stock'} | ${deliveryStr}${durationStr}`;
+  });
+
   const msg =
     `🛍 *Product Details*\n\n` +
     `📦 *Product:* ${product.name}\n` +
@@ -592,7 +617,8 @@ bot.action(/^prod_(.+)$/, async (ctx) => {
     `📊 *Total Stock:* ${totalStock}\n` +
     `💰 *Starting from:* Rs. ${minPrice.toFixed(0)} PKR\n\n` +
     `📝 *Description:*\n${desc}\n\n` +
-    `👇 *Select your preferred plan / duration:*`;
+    `📋 *Available Plans & Warranties:*${plansListText}\n\n` +
+    `👇 *Select your preferred plan / duration to purchase:*`;
 
   await safeEditMessage(ctx, msg, getProductVariantsKeyboard(product, variants, backTarget));
 });
