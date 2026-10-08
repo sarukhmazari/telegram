@@ -4,7 +4,8 @@ export function getMainMenuKeyboard(isAdmin: boolean = false) {
   const buttons = [
     [Markup.button.callback('🛍 Store', 'menu_store'), Markup.button.callback('📦 My Orders', 'menu_orders')],
     [Markup.button.callback('💰 Balance', 'menu_balance'), Markup.button.callback('🎁 Promotions', 'menu_promotions')],
-    [Markup.button.callback('📞 Support', 'menu_support'), Markup.button.callback('👤 My Account', 'menu_account')],
+    [Markup.button.callback('⭐ Reviews', 'menu_reviews'), Markup.button.callback('📞 Support', 'menu_support')],
+    [Markup.button.callback('👤 My Account', 'menu_account')],
   ];
 
   if (isAdmin) {

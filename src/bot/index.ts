@@ -338,11 +338,66 @@ bot.action('menu_orders', async (ctx) => {
   await safeEditMessage(ctx, msg, Markup.inlineKeyboard(buttons));
 });
 
+// ⭐ Customer Store Reviews Menu
+bot.action('menu_reviews', async (ctx) => {
+  ctx.answerCbQuery().catch(() => {});
+  const totalReviews = await prisma.review.count({ where: { isApproved: true } });
+  const recentReviews = await prisma.review.findMany({
+    where: { isApproved: true },
+    orderBy: { createdAt: 'desc' },
+    include: { product: true, user: true },
+    take: 5,
+  });
+
+  let avgRating = '5.0';
+  if (totalReviews > 0) {
+    const all = await prisma.review.findMany({
+      where: { isApproved: true },
+      select: { rating: true },
+    });
+    const sum = all.reduce((acc, r) => acc + r.rating, 0);
+    avgRating = (sum / all.length).toFixed(1);
+  }
+
+  let text =
+    `⭐ *Customer Reviews & Ratings*\n\n` +
+    `📊 *Average Store Rating:* ⭐ *${avgRating} / 5.0* (${totalReviews} verified reviews)\n\n`;
+
+  if (recentReviews.length === 0) {
+    text += `_No public customer reviews submitted yet._\n\n_Purchase any digital product to leave a 1-5 star review after delivery!_`;
+  } else {
+    text += `*Latest Verified Customer Feedback:*\n\n`;
+    recentReviews.forEach((r, i) => {
+      const stars = '⭐'.repeat(r.rating);
+      const userStr = r.user?.username ? `@${r.user.username}` : (r.user?.firstName || 'Verified Customer');
+      const prodName = r.product?.name || 'Digital Item';
+      text += `${i + 1}. ${stars} *${prodName}*\n`;
+      if (r.comment) text += `   "${r.comment}"\n`;
+      text += `   — _${userStr}_\n\n`;
+    });
+  }
+
+  const buttons = [
+    [Markup.button.callback('🛍 Browse Store Products', 'menu_store')],
+    [Markup.button.callback('🏠 Return to Main Menu', 'menu_main')],
+  ];
+
+  await safeEditMessage(ctx, text, Markup.inlineKeyboard(buttons));
+});
+
 // View Order Details & Purchased Credentials
 bot.action(/^view_order_(.+)$/, async (ctx) => {
   ctx.answerCbQuery().catch(() => {});
   const orderId = ctx.match[1];
-  const order = await OrderService.getOrderById(orderId);
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      items: {
+        include: { variant: { include: { product: true } } },
+      },
+      review: true,
+    },
+  });
   if (!order) {
     return;
   }
@@ -357,9 +412,16 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
     `📦 *Product:* ${productName}\n` +
     `💰 *Total Amount:* *Rs. ${totalAmount} PKR*\n` +
     `📊 *Status:* [${order.orderStatus}]\n` +
-    `📅 *Date:* ${new Date(order.createdAt).toLocaleDateString()}\n\n`;
+    `📅 *Date:* ${new Date(order.createdAt).toLocaleDateString()}\n`;
 
-  if (order.orderStatus === 'COMPLETED' && order.deliveryData) {
+  if (order.review) {
+    const stars = '⭐'.repeat(order.review.rating);
+    msg += `⭐ *Your Rating:* ${stars} (${order.review.rating}/5)\n`;
+    if (order.review.comment) msg += `💬 *Your Feedback:* "${order.review.comment}"\n`;
+  }
+  msg += `\n`;
+
+  if ((order.orderStatus === 'COMPLETED' || order.deliveryStatus === 'DELIVERED') && order.deliveryData) {
     try {
       const { decryptData } = await import('../utils/crypto.js');
       const decryptedJson = decryptData(order.deliveryData);
@@ -373,11 +435,25 @@ bot.action(/^view_order_(.+)$/, async (ctx) => {
     }
   }
 
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('⬅️ Back to Orders', 'menu_orders'), Markup.button.callback('🏠 Home', 'menu_main')],
+  const buttons: any[] = [];
+
+  // If completed and not yet reviewed, offer star rating buttons
+  if ((order.orderStatus === 'COMPLETED' || order.deliveryStatus === 'DELIVERED') && !order.review) {
+    buttons.push([
+      Markup.button.callback('⭐ 1', `rate_order_${order.id}_1`),
+      Markup.button.callback('⭐ 2', `rate_order_${order.id}_2`),
+      Markup.button.callback('⭐ 3', `rate_order_${order.id}_3`),
+      Markup.button.callback('⭐ 4', `rate_order_${order.id}_4`),
+      Markup.button.callback('⭐ 5', `rate_order_${order.id}_5`),
+    ]);
+  }
+
+  buttons.push([
+    Markup.button.callback('⬅️ Back to Orders', 'menu_orders'),
+    Markup.button.callback('🏠 Home', 'menu_main'),
   ]);
 
-  await safeEditMessage(ctx, msg, keyboard);
+  await safeEditMessage(ctx, msg, Markup.inlineKeyboard(buttons));
 });
 
 // Promotions Menu
