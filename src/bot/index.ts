@@ -16,6 +16,8 @@ import { WalletPaymentProvider } from '../payments/providers/walletPaymentProvid
 import { DeliveryService } from '../services/deliveryService.js';
 import { PaymentAccountService } from '../services/paymentAccountService.js';
 import { SettingService } from '../services/settingService.js';
+import { ReviewService } from '../services/reviewService.js';
+import { prisma } from '../database/index.js';
 import { getPaymentReviewKeyboard } from './keyboards/admin.js';
 
 import https from 'https';
@@ -888,7 +890,93 @@ bot.action(/^pay_method_wallet_(.+)$/, async (ctx) => {
   }
 });
 
-// 📩 User Payment Proof Listener (Text TRX ID or Photo Screenshot)
+// ⭐ Customer 1-5 Star Rating Action (Delivered Orders Only)
+bot.action(/^rate_order_([a-zA-Z0-9-]+)_([1-5])$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const orderId = ctx.match[1];
+  const rating = parseInt(ctx.match[2], 10);
+
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      items: {
+        include: { variant: { include: { product: true } } },
+      },
+      review: true,
+      user: true,
+    },
+  });
+
+  if (!order) {
+    await ctx.answerCbQuery('Order not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  // Ensure this order was delivered before allowing review
+  if (order.deliveryStatus !== 'DELIVERED' && order.orderStatus !== 'COMPLETED') {
+    await ctx.answerCbQuery('⚠️ Reviews can only be submitted after your order is successfully delivered.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  // Ensure user owns this order
+  if (order.user.telegramId !== BigInt(ctx.from.id)) {
+    await ctx.answerCbQuery('Unauthorized.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const productId = order.items[0]?.variant?.productId;
+  if (!productId) {
+    await ctx.answerCbQuery('Product info not found.', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const existingReview = order.review;
+  if (existingReview) {
+    await prisma.review.update({
+      where: { id: existingReview.id },
+      data: { rating, isApproved: true },
+    });
+  } else {
+    await ReviewService.createReview(order.id, productId, order.userId, rating);
+  }
+
+  const starsStr = '⭐'.repeat(rating);
+  const productName = order.items[0]?.variant?.product?.name || 'Product';
+
+  if (!ctx.session) ctx.session = {};
+  ctx.session.userState = 'AWAITING_REVIEW_COMMENT';
+  ctx.session.userData = { orderId: order.id, rating, productName };
+
+  const promptMsg =
+    `🌟 *Thank you for rating ${productName}!* ${starsStr} (${rating}/5)\n\n` +
+    `💬 *Would you like to write a short review or feedback?*\n` +
+    `Simply reply to this message with your comments, or press *Skip* below:`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('⏭ Skip (Save Rating Only)', 'review_skip_comment')],
+    [Markup.button.callback('🏠 Return to Store', 'menu_main')],
+  ]);
+
+  await ctx.reply(promptMsg, {
+    parse_mode: 'Markdown',
+    reply_markup: keyboard.reply_markup,
+  });
+});
+
+// ⏭ Customer Skips Writing Review Comment
+bot.action('review_skip_comment', async (ctx) => {
+  await ctx.answerCbQuery('Rating saved! Thank you.').catch(() => {});
+  if (ctx.session) {
+    ctx.session.userState = undefined;
+    ctx.session.userData = undefined;
+  }
+  await ctx.reply('✅ *Your review has been saved! Thank you for your feedback!*', {
+    parse_mode: 'Markdown',
+    reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
+  });
+});
+
+// 📩 User Payment Proof Listener & Review Comment Listener
 bot.on(['text', 'photo'], async (ctx, next) => {
   if (ctx.message && 'text' in ctx.message && ctx.message.text.startsWith('/')) {
     if (ctx.session) {
@@ -896,6 +984,36 @@ bot.on(['text', 'photo'], async (ctx, next) => {
       ctx.session.userData = undefined;
     }
     return next();
+  }
+
+  // 📝 Customer Review Comment Input
+  if (ctx.session?.userState === 'AWAITING_REVIEW_COMMENT' && ctx.session?.userData?.orderId) {
+    const { orderId, rating, productName } = ctx.session.userData;
+    const commentText = ctx.message && 'text' in ctx.message ? ctx.message.text.trim() : '';
+
+    if (commentText) {
+      await prisma.review.update({
+        where: { orderId },
+        data: { comment: commentText },
+      }).catch(() => {});
+    }
+
+    ctx.session.userState = undefined;
+    ctx.session.userData = undefined;
+
+    const starsStr = '⭐'.repeat(rating || 5);
+    await ctx.reply(
+      `🎉 *Review Submitted Successfully!*\n\n` +
+      `• *Product:* ${productName}\n` +
+      `• *Rating:* ${starsStr} (${rating}/5)\n` +
+      (commentText ? `• *Feedback:* "${commentText}"\n\n` : '\n') +
+      `Thank you for helping us improve our service!`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
+      }
+    );
+    return;
   }
 
   if (ctx.session?.userState === 'AWAITING_PAYMENT_PROOF' && ctx.session?.userData?.orderId) {

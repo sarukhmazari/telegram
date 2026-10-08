@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 import { Telegraf } from 'telegraf';
 import { BotContext } from '../types/context.js';
 import { getBackHomeKeyboard } from '../bot/keyboards/main.js';
+import { getOrderDeliveryReviewKeyboard } from '../bot/keyboards/store.js';
 
 export class DeliveryService {
   /**
@@ -130,7 +131,14 @@ export class DeliveryService {
 
     // Notify customer via Telegram
     if (bot) {
-      await this.notifyCustomerDelivery(bot, order.user.telegramId, order.orderNumber, orderItem.variant.product.name, deliveredItems);
+      await this.notifyCustomerDelivery(
+        bot,
+        order.user.telegramId,
+        order.orderNumber,
+        orderItem.variant.product.name,
+        deliveredItems,
+        order.id
+      );
     }
 
     return true;
@@ -166,13 +174,16 @@ export class DeliveryService {
     telegramId: bigint | number,
     orderNumber: string,
     productName: string,
-    items: { content: string; fileId?: string | null }[]
+    items: { content: string; fileId?: string | null }[],
+    orderId?: string
   ) {
     const telegramApi = bot.telegram || (typeof bot.sendMessage === 'function' ? bot : null);
     if (!telegramApi) {
       logger.error('No valid Telegram API instance provided for delivery notification');
       return;
     }
+
+    const reviewKeyboard = orderId ? getOrderDeliveryReviewKeyboard(orderId) : getBackHomeKeyboard();
 
     let message = `✅ *Purchase Complete! Order #${orderNumber}*\n\n`;
     message += `Product: *${productName}*\n\n`;
@@ -182,12 +193,12 @@ export class DeliveryService {
       message += `\`\`\`\n${item.content}\n\`\`\`\n`;
     });
 
-    message += `Thank you for shopping with us!`;
+    message += `🌟 *Rate your experience below (1 to 5 Stars):*`;
 
     try {
       await telegramApi.sendMessage(telegramId.toString(), message, {
         parse_mode: 'Markdown',
-        reply_markup: getBackHomeKeyboard().reply_markup,
+        reply_markup: reviewKeyboard.reply_markup,
       });
     } catch (err) {
       logger.warn('Markdown parsing failed for delivery message, falling back to plain text', { err });
@@ -195,10 +206,10 @@ export class DeliveryService {
       items.forEach((item) => {
         plainMsg += `${item.content}\n\n`;
       });
-      plainMsg += `Thank you for shopping with us!`;
+      plainMsg += `🌟 Rate your experience below (1 to 5 Stars):`;
 
       await telegramApi.sendMessage(telegramId.toString(), plainMsg, {
-        reply_markup: getBackHomeKeyboard().reply_markup,
+        reply_markup: reviewKeyboard.reply_markup,
       }).catch((fallbackErr: any) => {
         logger.error('Failed to send fallback delivery message', { fallbackErr });
       });

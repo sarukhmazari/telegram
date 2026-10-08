@@ -83,3 +83,16 @@ export function getProductVariantsKeyboard(
 
   return Markup.inlineKeyboard(rows);
 }
+
+export function getOrderDeliveryReviewKeyboard(orderId: string) {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('⭐ 1', `rate_order_${orderId}_1`),
+      Markup.button.callback('⭐ 2', `rate_order_${orderId}_2`),
+      Markup.button.callback('⭐ 3', `rate_order_${orderId}_3`),
+      Markup.button.callback('⭐ 4', `rate_order_${orderId}_4`),
+      Markup.button.callback('⭐ 5', `rate_order_${orderId}_5`),
+    ],
+    [Markup.button.callback('🏠 Return to Store Menu', 'menu_main')],
+  ]);
+}
