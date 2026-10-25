@@ -6,6 +6,7 @@ dotenv.config();
 
 const envSchema = z.object({
   BOT_TOKEN: z.string().trim().min(1, 'BOT_TOKEN is required'),
+  BOT_USERNAME: z.string().trim().optional(),
   ADMIN_IDS: z.string().transform((val) =>
     val
       .split(',')
@@ -68,6 +69,7 @@ if (!parsedEnv.success) {
   const rawStoreName = process.env.STORE_NAME || 'Digital Store';
   validatedConfig = {
     BOT_TOKEN: process.env.BOT_TOKEN || '',
+    BOT_USERNAME: process.env.BOT_USERNAME || '',
     ADMIN_IDS: (process.env.ADMIN_IDS || '')
       .split(',')
       .map((s) => s.trim().replace(/^["']|["']$/g, ''))

@@ -3,6 +3,7 @@ import { bot } from '../src/bot/index.js';
 import { connectDatabase, prisma } from '../src/database/index.js';
 import { config, configError } from '../src/config/index.js';
 import { PaymentAccountService } from '../src/services/paymentAccountService.js';
+import { SettingService } from '../src/services/settingService.js';
 
 // Polyfill BigInt JSON serialization for serverless responses and logs
 if (typeof (BigInt.prototype as any).toJSON !== 'function') {
@@ -47,14 +48,29 @@ export default async function handler(
       let webhookAction: string | null = null;
       let webhookInfo: any = null;
       let dbCheck: any = 'checking...';
+      let configuredBotUsername = 'StoreBot';
+      let configuredSupportUsername: string | null = null;
 
-      // Test database connection
+      // Test database connection and fetch persistent settings
       try {
         await connectDatabase();
         await prisma.$queryRaw`SELECT 1`;
         dbCheck = '✅ Database connected successfully';
+        configuredBotUsername = await SettingService.getBotUsername(bot.botInfo?.username);
+        configuredSupportUsername = await SettingService.getSupportUsername();
       } catch (dbErr: any) {
         dbCheck = `❌ Database connection error: ${dbErr?.message || String(dbErr)}`;
+      }
+
+      // Check for direct settings query: /api/settings or ?action=settings
+      if (urlObj.pathname.endsWith('/settings') || urlObj.searchParams.get('action') === 'settings') {
+        return sendJson(200, {
+          botUsername: configuredBotUsername,
+          supportUsername: configuredSupportUsername,
+          botLink: await SettingService.getBotLink(configuredBotUsername),
+          supportLink: await SettingService.getSupportLink(configuredSupportUsername),
+          store: config.STORE_NAME || 'Digital Store',
+        });
       }
 
       // Check / Set Webhook
@@ -76,6 +92,8 @@ export default async function handler(
       return sendJson(200, {
         status: hasValidToken && !configError ? 'operational' : 'configuration_required',
         store: config.STORE_NAME || 'Digital Store',
+        botUsername: configuredBotUsername,
+        supportUsername: configuredSupportUsername,
         botTokenStatus: hasValidToken ? '✅ BOT_TOKEN configured' : '❌ BOT_TOKEN missing',
         databaseStatus: dbCheck,
         environmentValidation: configError
@@ -134,6 +152,55 @@ export default async function handler(
         } catch (streamErr) {
           console.error('Error reading raw request stream body:', streamErr);
         }
+      }
+
+      // Check for direct settings POST: /api/settings or ?action=settings
+      const urlObj = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+      if (urlObj.pathname.endsWith('/settings') || urlObj.searchParams.get('action') === 'settings') {
+        const authHeader = (req.headers.authorization || req.headers['x-admin-key']) as string | undefined;
+        const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : null;
+        const isAuthorized =
+          Boolean(token && (token === config.BOT_TOKEN || token === config.ENCRYPTION_KEY));
+        if (!isAuthorized) {
+          return sendJson(401, { error: 'Unauthorized: Valid Bearer BOT_TOKEN or admin key required' });
+        }
+
+        const updates: any = {};
+        if (body && typeof body === 'object') {
+          if (body.botUsername !== undefined) {
+            const v = SettingService.validateUsername(body.botUsername, true);
+            if (!v.valid) {
+              return sendJson(400, { error: v.error });
+            }
+            await SettingService.setBotUsername(v.clean);
+            if (bot.botInfo) bot.botInfo.username = v.clean;
+            updates.botUsername = v.clean;
+          }
+          if (body.supportUsername !== undefined) {
+            const raw = body.supportUsername;
+            if (raw === null || raw === '' || raw === '__NONE__') {
+              await SettingService.setSupportUsername(null);
+              updates.supportUsername = null;
+            } else {
+              const v = SettingService.validateUsername(raw, false);
+              if (!v.valid) {
+                return sendJson(400, { error: v.error });
+              }
+              await SettingService.setSupportUsername(v.clean);
+              updates.supportUsername = v.clean;
+            }
+          }
+        }
+
+        const botUsername = await SettingService.getBotUsername(bot.botInfo?.username);
+        const supportUsername = await SettingService.getSupportUsername();
+        return sendJson(200, {
+          success: true,
+          message: 'Settings updated successfully',
+          botUsername,
+          supportUsername,
+          updates,
+        });
       }
 
       // 3. Process update directly without passing response to avoid early teardown

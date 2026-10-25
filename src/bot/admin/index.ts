@@ -1844,7 +1844,7 @@ adminComposer.action('admin_bot_settings', async (ctx) => {
     ctx.session.adminState = undefined;
     ctx.session.adminData = undefined;
   }
-  const me = await ctx.telegram.getMe();
+  const me = await ctx.telegram.getMe().catch(() => ({ first_name: 'Store Bot', username: undefined }));
   const shortDescObj = await ctx.telegram.getMyShortDescription().catch(() => ({ short_description: '' }));
   const descObj = await ctx.telegram.getMyDescription().catch(() => ({ description: '' }));
 
@@ -1855,16 +1855,79 @@ adminComposer.action('admin_bot_settings', async (ctx) => {
   const currentSupport = await SettingService.getSupportUsername();
   const supportStr = currentSupport ? `@${currentSupport}` : '_(Not set / Disabled)_';
 
+  const configuredBotUsername = await SettingService.getBotUsername(me.username);
+  const botUsernameDiff = me.username && configuredBotUsername.toLowerCase() !== me.username.toLowerCase();
+  const botUsernameDisplay = `@${configuredBotUsername}${botUsernameDiff ? ` _(Telegram API: @${me.username})_` : ''}`;
+
   const msg =
-    `🤖 *Bot Profile & Settings*\n\n` +
-    `• *Name:* ${me.first_name}\n` +
-    `• *Username:* @${me.username}\n` +
+    `🤖 *Bot Configuration & General Settings*\n\n` +
+    `• *Telegram Bot Username:* ${botUsernameDisplay}\n` +
+    `• *Support Username:* ${supportStr}\n` +
+    `• *Bot Display Name:* ${me.first_name}\n` +
     `• *Bio / About:* ${currentBio}\n` +
-    `• *Chat Description:* ${currentDesc}\n` +
-    `• *Support Handle:* ${supportStr}\n\n` +
-    `Select a setting below to update:`;
+    `• *Chat Description:* ${currentDesc}\n\n` +
+    `💡 _Select an option below to update configuration:_`;
 
   await safeEditAdminMessage(ctx, msg, getBotSettingsKeyboard());
+});
+
+// 🤖 Change Bot Username — Prompt
+adminComposer.action('admin_change_bot_username', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!ctx.session) ctx.session = {};
+  ctx.session.adminState = 'AWAITING_BOT_USERNAME';
+
+  const me = await ctx.telegram.getMe().catch(() => ({ username: undefined }));
+  const configuredUsername = await SettingService.getBotUsername(me?.username);
+  const currentStatus = configuredUsername
+    ? `✅ *Current Configured Bot Username:* @${configuredUsername}`
+    : '❌ *No bot username configured*';
+
+  const msg =
+    `🤖 *Telegram Bot Username Settings*\n\n` +
+    `${currentStatus}\n` +
+    (me?.username ? `📡 *Actual Telegram Network Handle:* @${me.username}\n\n` : '\n') +
+    `ℹ️ *How Telegram Bot Usernames Work:*\n` +
+    `• *Configured App Username:* Changing this field updates the bot's username used across *deep links*, *referral URLs*, *push notifications*, *in-bot buttons*, *customer links*, and *public pages*.\n` +
+    `• ⚠️ *Official Telegram Notice:* The Telegram Bot API does *not* permit bots to rename their actual network username directly. To change your bot's official username on Telegram, you must use [@BotFather](https://t.me/BotFather) with the \`/setusername\` command.\n\n` +
+    `*Instructions:*\n` +
+    `Reply with your bot's username (e.g. \`@${me?.username || 'MyStoreBot'}\` or \`${me?.username || 'MyStoreBot'}\`).\n\n` +
+    `_Format requirement: 5–32 characters, letters, numbers, and underscores, ending in 'bot'._`;
+
+  const buttons: any[] = [];
+  if (me?.username && me.username.toLowerCase() !== configuredUsername.toLowerCase()) {
+    buttons.push([Markup.button.callback(`🔄 Sync with Telegram API (@${me.username})`, 'admin_sync_bot_username')]);
+  }
+  buttons.push([Markup.button.url('📲 Open @BotFather in Telegram', 'https://t.me/BotFather')]);
+  buttons.push([Markup.button.callback('❌ Cancel', 'admin_bot_settings')]);
+
+  await safeEditAdminMessage(ctx, msg, Markup.inlineKeyboard(buttons));
+});
+
+// 🔄 Sync Bot Username with Telegram API
+adminComposer.action('admin_sync_bot_username', async (ctx) => {
+  await ctx.answerCbQuery('🔄 Syncing with Telegram API...').catch(() => {});
+  const me = await ctx.telegram.getMe().catch(() => null);
+  if (!me?.username) {
+    await ctx.reply('⚠️ Unable to fetch username from Telegram API. Please configure manually.');
+    return;
+  }
+  await SettingService.setBotUsername(me.username);
+  if (ctx.botInfo) {
+    ctx.botInfo.username = me.username;
+  }
+  if (ctx.session) {
+    ctx.session.adminState = undefined;
+    ctx.session.adminData = undefined;
+  }
+  await safeEditAdminMessage(
+    ctx,
+    `✅ *Telegram Bot Username Synced Successfully!*\n\n` +
+    `• *Configured Handle:* @${me.username}\n` +
+    `• *Direct Link:* [https://t.me/${me.username}](https://t.me/${me.username})\n\n` +
+    `All customer referral links, notifications, buttons, and store references now use *@${me.username}*.`,
+    getBotSettingsKeyboard()
+  );
 });
 
 // 📛 Change Bot Name — Prompt
@@ -1913,13 +1976,19 @@ adminComposer.action('admin_change_support', async (ctx) => {
   ctx.session.adminState = 'AWAITING_BOT_SUPPORT_USERNAME';
 
   const currentSupport = await SettingService.getSupportUsername();
-  const statusStr = currentSupport ? `✅ *Current Support Handle:* @${currentSupport}` : '❌ *No support handle set*';
+  const statusStr = currentSupport
+    ? `✅ *Current Support Username:* @${currentSupport}`
+    : '❌ *No support handle set (Disabled)*';
 
   const msg =
-    `🎧 *Store Support Handle*\n\n` +
+    `🎧 *Support Username Settings*\n\n` +
     `${statusStr}\n\n` +
-    `Reply with the Telegram username for customer support (e.g. \`@zoxer19\` or \`zoxer19\`).\n\n` +
-    `_To remove/delete the support handle, press "Clear Support Handle" below._`;
+    `*How it works:*\n` +
+    `• This handle is used across the bot in the *Support menu*, *contact links*, *help screens*, *order verification notices*, and *direct customer support buttons*.\n` +
+    `• Generates valid links: \`https://t.me/<username>\`\n\n` +
+    `*Instructions:*\n` +
+    `Reply with the Telegram handle for customer support (e.g. \`@StoreSupport\` or \`StoreSupport\`).\n\n` +
+    `_To remove or disable the support handle, tap "Clear Support Handle" below._`;
 
   await safeEditAdminMessage(
     ctx,
@@ -1934,8 +2003,12 @@ adminComposer.action('admin_change_support', async (ctx) => {
 // 🗑 Clear Support Handle
 adminComposer.action('admin_clear_support', async (ctx) => {
   await ctx.answerCbQuery('✅ Support handle removed!', { show_alert: true }).catch(() => {});
-  await SettingService.setSetting('support_username', '__NONE__');
-  await safeEditAdminMessage(ctx, '✅ *Store Support Handle Removed!*', getBotSettingsKeyboard());
+  await SettingService.setSupportUsername(null);
+  await safeEditAdminMessage(
+    ctx,
+    '✅ *Support Username Removed Successfully!*\n\nCustomer support buttons and direct contact links have been disabled.',
+    getBotSettingsKeyboard()
+  );
 });
 
 // 👤 Change Bot Profile Photo — Info (Telegram API limitation)
@@ -2459,20 +2532,97 @@ adminComposer.on(['text', 'photo'], async (ctx, next) => {
     return;
   }
 
-  // 🎧 Bot Settings Wizard — Change Support Handle
-  if (state === 'AWAITING_BOT_SUPPORT_USERNAME') {
-    const cleanUsername = text.trim().replace(/^@/, '');
-    if (!cleanUsername || cleanUsername.length < 3) {
-      await ctx.reply('⚠️ Please send a valid Telegram username (e.g. `@zoxer19`).');
+  // 🤖 Bot Settings Wizard — Change Bot Username
+  if (state === 'AWAITING_BOT_USERNAME') {
+    const rawInput = (text || '').trim();
+    if (!rawInput) {
+      await ctx.reply('⚠️ Please send a valid Telegram bot username (e.g. `@MyStoreBot`).');
       return;
     }
+
+    const validation = SettingService.validateUsername(rawInput, true);
+    if (!validation.valid) {
+      await ctx.reply(
+        `⚠️ *Invalid Bot Username*\n\n${validation.error}\n\nPlease try again, or tap Cancel below:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]]).reply_markup,
+        }
+      );
+      return;
+    }
+
     try {
-      await SettingService.setSetting('support_username', cleanUsername);
+      const result = await SettingService.setBotUsername(validation.clean);
+      if (!result.success) {
+        await ctx.reply(`⚠️ Failed to update bot username: ${result.error}`);
+        return;
+      }
+
+      if (ctx.botInfo) {
+        ctx.botInfo.username = validation.clean;
+      }
       ctx.session!.adminState = undefined;
-      await ctx.reply(`✅ *Support handle updated to:* @${cleanUsername}`, {
-        parse_mode: 'Markdown',
-        reply_markup: getBotSettingsKeyboard().reply_markup,
-      });
+      const link = `https://t.me/${validation.clean}`;
+
+      await ctx.reply(
+        `✅ *Telegram Bot Username Updated Successfully!*\n\n` +
+        `• *Configured Handle:* @${validation.clean}\n` +
+        `• *Direct Link:* [${link}](${link})\n\n` +
+        `All customer referral links, notifications, buttons, and store references now use *@${validation.clean}*.\n\n` +
+        `_Note: Ensure the actual bot handle on Telegram matches this setting via @BotFather._`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: getBotSettingsKeyboard().reply_markup,
+        }
+      );
+    } catch (err: any) {
+      logger.error('Failed to set bot username', { error: err.message });
+      await ctx.reply(`⚠️ Failed to update bot username: ${err.message}`);
+    }
+    return;
+  }
+
+  // 🎧 Bot Settings Wizard — Change Support Handle
+  if (state === 'AWAITING_BOT_SUPPORT_USERNAME') {
+    const rawInput = (text || '').trim();
+    if (!rawInput) {
+      await ctx.reply('⚠️ Please send a valid Telegram username (e.g. `@StoreSupport`).');
+      return;
+    }
+
+    const validation = SettingService.validateUsername(rawInput, false);
+    if (!validation.valid) {
+      await ctx.reply(
+        `⚠️ *Invalid Support Username*\n\n${validation.error}\n\nPlease try again, or tap Cancel below:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin_bot_settings')]]).reply_markup,
+        }
+      );
+      return;
+    }
+
+    try {
+      const result = await SettingService.setSupportUsername(validation.clean);
+      if (!result.success) {
+        await ctx.reply(`⚠️ Failed to update support username: ${result.error}`);
+        return;
+      }
+
+      ctx.session!.adminState = undefined;
+      const link = `https://t.me/${validation.clean}`;
+
+      await ctx.reply(
+        `✅ *Support Username Updated Successfully!*\n\n` +
+        `• *Support Handle:* @${validation.clean}\n` +
+        `• *Direct Telegram Link:* [${link}](${link})\n\n` +
+        `Customer support buttons, help text, and payment notifications will now direct customers to *@${validation.clean}*.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: getBotSettingsKeyboard().reply_markup,
+        }
+      );
     } catch (err: any) {
       logger.error('Failed to set support handle', { error: err.message });
       await ctx.reply(`⚠️ Failed to update support handle: ${err.message}`);

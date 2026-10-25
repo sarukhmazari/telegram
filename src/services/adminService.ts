@@ -6,6 +6,7 @@ import { DeliveryService } from './deliveryService.js';
 import { Telegraf } from 'telegraf';
 import { BotContext } from '../types/context.js';
 import { ManualPaymentProvider } from '../payments/providers/manualPaymentProvider.js';
+import { SettingService } from './settingService.js';
 
 export interface DashboardMetrics {
   totalUsers: number;
@@ -230,13 +231,15 @@ export class AdminService {
       if (botInstance) {
         const telegramApi = botInstance.telegram || (typeof botInstance.sendMessage === 'function' ? botInstance : null);
         if (telegramApi) {
+          const supportUser = await SettingService.getSupportUsername();
+          const supportContact = supportUser ? ` (@${supportUser})` : '';
           const msg =
             `❌ *Payment Verification Update*\n\n` +
             `• *Order Number:* \`#${orderNum}\`\n` +
             `• *Amount:* Rs. ${amountStr} ${payment.currency}\n` +
             `• *Status:* ❌ *Payment Rejected / Declined*\n` +
             `• *Reason:* ${adminNotes || 'Verification rejected by store admin.'}\n\n` +
-            `If you believe this is a mistake, please contact support (@zoxer19).`;
+            `If you believe this is a mistake, please contact support${supportContact}.`;
 
           await telegramApi.sendMessage(payment.user.telegramId.toString(), msg, {
             parse_mode: 'Markdown',

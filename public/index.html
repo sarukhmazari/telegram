@@ -105,13 +105,26 @@
       Service Operational
     </div>
     <h1>Mazari Digital Store Bot</h1>
-    <p>The Telegram store bot webhook server is live and actively serving requests.</p>
-    <a class="btn" href="https://web.telegram.org/a/#8659008762" target="_blank" rel="noopener noreferrer">
-      Open @zoxer19bot in Telegram
+    <a id="bot-btn" class="btn" href="https://t.me" target="_blank" rel="noopener noreferrer">
+      Open in Telegram
     </a>
     <div class="footer">
       Powered by Telegraf, Prisma & Vercel Serverless
     </div>
   </div>
+  <script>
+    fetch('/api')
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data && data.botUsername) {
+          var btn = document.getElementById('bot-btn');
+          if (btn) {
+            btn.href = 'https://t.me/' + encodeURIComponent(data.botUsername);
+            btn.textContent = 'Open @' + data.botUsername + ' in Telegram';
+          }
+        }
+      })
+      .catch(function() {});
+  </script>
 </body>
 </html>

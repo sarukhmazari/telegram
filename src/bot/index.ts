@@ -297,8 +297,7 @@ bot.action('menu_deposit', async (ctx) => {
 bot.action('menu_account', async (ctx) => {
   ctx.answerCbQuery().catch(() => {});
   const user = ctx.dbUser || (ctx.from ? await UserService.getUserByTelegramId(ctx.from.id) : null);
-  if (!user) return;
-
+  const botUsername = await SettingService.getBotUsername(ctx.botInfo?.username);
   const msg =
     `👤 *My Account Profile*\n\n` +
     `User ID: \`${user.telegramId.toString()}\` \n` +
@@ -306,7 +305,7 @@ bot.action('menu_account', async (ctx) => {
     `Wallet Balance: *Rs. ${Number(user.balance).toFixed(2)}*\n` +
     `Referral Code: \`${user.referralCode}\` \n\n` +
     `Share your referral link to earn rewards:\n` +
-    `\`https://t.me/${ctx.botInfo?.username || 'Bot'}?start=${user.referralCode}\``;
+    `\`https://t.me/${botUsername}?start=${user.referralCode}\``;
 
   await safeEditMessage(ctx, msg, getMainMenuKeyboard(ctx.isAdmin));
 });
@@ -467,18 +466,25 @@ bot.action('menu_promotions', async (ctx) => {
 // Support Menu
 bot.action('menu_support', async (ctx) => {
   ctx.answerCbQuery().catch(() => {});
-  const helpText =
-    `❓ *Store Help & Support*\n\n` +
-    `Need assistance with an order, wallet balance, or product inquiry?\n\n` +
-    `💬 *Store Admin Support:* *@zoxer19*\n` +
-    `🔗 *Direct Link:* [t.me/zoxer19](https://t.me/zoxer19)`;
+  const supportUser = await SettingService.getSupportUsername();
+  const supportLink = await SettingService.getSupportLink(supportUser);
 
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.url('💬 Contact Support (@zoxer19)', 'https://t.me/zoxer19')],
-    [Markup.button.callback('🏠 Home', 'menu_main')],
-  ]);
+  const helpText = supportUser
+    ? `❓ *Store Help & Support*\n\n` +
+      `Need assistance with an order, wallet balance, or product inquiry?\n\n` +
+      `💬 *Store Admin Support:* *@${supportUser}*\n` +
+      `🔗 *Direct Link:* [t.me/${supportUser}](${supportLink})`
+    : `❓ *Store Help & Support*\n\n` +
+      `Need assistance with an order, wallet balance, or product inquiry?\n\n` +
+      `_Customer support handle is currently being updated. Please check back shortly._`;
 
-  await safeEditMessage(ctx, helpText, keyboard);
+  const buttons: any[] = [];
+  if (supportUser && supportLink) {
+    buttons.push([Markup.button.url(`💬 Contact Support (@${supportUser})`, supportLink)]);
+  }
+  buttons.push([Markup.button.callback('🏠 Home', 'menu_main')]);
+
+  await safeEditMessage(ctx, helpText, Markup.inlineKeyboard(buttons));
 });
 
 // Category Click — Show all Products or Plan Types in Category
@@ -1127,11 +1133,13 @@ bot.on(['text', 'photo'], async (ctx, next) => {
     ctx.session.userData = undefined;
 
     // Send confirmation to customer
+    const supportUser = await SettingService.getSupportUsername();
+    const adminMention = supportUser ? `@${supportUser}` : 'Store Admin';
     await ctx.reply(
       `✅ *Payment Proof Submitted Successfully!*\n\n` +
       `📋 *Order Number:* \`#${orderNumber}\`\n` +
       `💳 *Reference/TRX:* \`${trxRef}\` \n\n` +
-      `Store admin (*@zoxer19*) is verifying your payment. Your digital credentials will be delivered here as soon as approved!`,
+      `Store admin (*${adminMention}*) is verifying your payment. Your digital credentials will be delivered here as soon as approved!`,
       {
         parse_mode: 'Markdown',
         reply_markup: getMainMenuKeyboard(ctx.isAdmin).reply_markup,
@@ -1174,13 +1182,14 @@ bot.on(['text', 'photo'], async (ctx, next) => {
 
     // 📲 Trigger instant high-priority mobile push alert directly to admin's phone (Topic: King_of_Ai_Digital_Marketing)
     const customerStr = user.username ? `@${user.username}` : (user.firstName || user.id);
+    const activeBotUsername = await SettingService.getBotUsername(ctx.botInfo?.username);
     await PushNotificationService.sendPaymentAlert({
       orderNumber,
       amount,
       customer: customerStr,
       provider: providerStr,
       trxRef,
-      botUsername: ctx.botInfo?.username,
+      botUsername: activeBotUsername,
     }).catch((pushErr) => {
       logger.warn('Failed to send instant ntfy push notification', { err: pushErr?.message });
     });
